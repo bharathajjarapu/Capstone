@@ -1,0 +1,23 @@
+{
+    "name": "vendot",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "description": "Vendor Payment Management System",
+    "dependencies": {
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4",
+        "react-router-dom": "^7.13.2"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-react": "^5.0.0",
+        "@tailwindcss/vite": "^4.2.2",
+        "tailwindcss": "^4.2.2",
+        "vite": "^8.0.3"
+    },
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview"
+    }
+}
