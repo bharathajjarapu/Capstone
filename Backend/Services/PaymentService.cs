@@ -50,12 +50,12 @@ public class PaymentService
         }
 
         decimal subTotal = 0;
-        var paymentItems = new List<PaymentItem>();
+        var paymentItems = new List<VenDot.Models.PaymentItem>();
         foreach (var item in request.Items)
         {
             var lineTotal = Math.Round(item.Quantity * item.UnitPrice, 2, MidpointRounding.AwayFromZero);
             subTotal += lineTotal;
-            paymentItems.Add(new PaymentItem
+            paymentItems.Add(new VenDot.Models.PaymentItem
             {
                 Description = item.Description,
                 Quantity = item.Quantity,

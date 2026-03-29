@@ -4,16 +4,16 @@
 
 **Stack:** React + Vite + TailwindCSS · .NET 8 Web API · Entity Framework Core · MSSQL 
 
-**Connection string (application database — not `master`):**  
-`Server=localhost\SQLEXPRESS;Database=VenDot;Trusted_Connection=True;TrustServerCertificate=True;`
-
-`TrustServerCertificate=True` avoids ODBC Driver 18 TLS/certificate issues on local SQL Express. For production, use proper certificates and stricter settings.
-
 ---
 
 ## 0. Create the VenDot database
 
 Create the database **once** on your machine before running EF Core migrations. The logical name is **VenDot** (capital V and D).
+
+**Connection string (application database — not `master`):**  
+`Server=localhost\SQLEXPRESS;Database=VenDot;Trusted_Connection=True;TrustServerCertificate=True;`
+
+`TrustServerCertificate=True` is for **Microsoft.Data.SqlClient** (used by EF Core): it trusts the server certificate when connecting with encryption, which avoids common TLS errors against local SQL Express.
 
 ### Option A — SQL Server Management Studio (SSMS)
 
@@ -81,34 +81,61 @@ Capstone/
 │   │   ├── PaymentItem.cs
 │   │   └── Report.cs
 │   ├── DTOs/
-│   │   ├── LoginRequest.cs
-│   │   ├── LoginResponse.cs
-│   │   ├── ChangePwdRequest.cs
-│   │   ├── CreateUserRequest.cs
-│   │   ├── CreateVendorRequest.cs
-│   │   ├── CreatePaymentRequest.cs   -- includes vendorId, vendorBankAccountId, line items, tax fields
-│   │   └── GenerateReportRequest.cs
+│   │   ├── Auth/
+│   │   │   ├── ChangePwdRequest.cs
+│   │   │   ├── LoginRequest.cs
+│   │   │   └── LoginResponse.cs
+│   │   ├── Users/
+│   │   │   ├── CreateUserRequest.cs
+│   │   │   ├── ResetPasswordRequest.cs
+│   │   │   ├── ResetPasswordResponse.cs
+│   │   │   ├── UpdateUserRequest.cs
+│   │   │   ├── UserCreateResponse.cs
+│   │   │   └── UserResponse.cs
+│   │   ├── Vendors/
+│   │   │   ├── BankAccountRequest.cs
+│   │   │   └── CreateVendorRequest.cs
+│   │   ├── Payments/
+│   │   │   ├── CreatePaymentRequest.cs
+│   │   │   ├── NoteRequest.cs
+│   │   │   └── PaymentItem.cs
+│   │   └── Reports/
+│   │       ├── GenerateReportRequest.cs
+│   │       ├── PaymentPreviewRow.cs
+│   │       ├── PreviewReportRequest.cs
+│   │       ├── PreviewReportResult.cs
+│   │       └── ReportFilters.cs
 │   ├── Services/
 │   │   ├── AuthService.cs
 │   │   ├── UserService.cs
 │   │   ├── VendorService.cs
 │   │   ├── PaymentService.cs
-│   │   └── ReportService.cs
+│   │   ├── ReportService.cs
+│   │   ├── IReportJobQueue.cs
+│   │   └── ReportJobQueue.cs
+│   ├── Utils/
+│   │   ├── EmailNormalizer.cs
+│   │   ├── PasswordGenerator.cs
+│   │   └── ReportExportHelper.cs   -- QuestPDF (PDF) + ClosedXML (XLSX)
 │   ├── Data/
-│   │   └── AppDBContext.cs      -- EF Core DbContext (no HasData seed rows; reference data from Testing/seed — see §5.2, §13)
+│   │   └── AppDBContext.cs         -- EF Core DbContext
 │   ├── Middleware/
 │   │   ├── ErrorHandlerMiddleware.cs
-│   │   └── TempPassMiddleware.cs   -- Blocks API except auth/password routes when user must change password
+│   │   └── TempPassMiddleware.cs   -- Blocks API Except Auth/Password Routes When User Must Change Password
 │   ├── HostedWorkers/
-│   │   └── ReportBackgroundWorker.cs   -- IHostedService: runs report jobs with IServiceScopeFactory (see §5.9 / §8)
-│   └── Program.cs
+│   │   └── ReportBackgroundWorker.cs   -- IHostedService: Report Jobs via IServiceScopeFactory
+│   ├── Migrations/                 -- EF Core Migrations
+│   ├── Properties/
+│   │   └── launchSettings.json
+│   ├── Program.cs
+│   └── VenDot.csproj
 │
-├── Testing/                     -- Bun: reset DB + migrations, seed data, API checks (see §13)
+├── Testing/
 │   ├── reset.ts
 │   ├── seed.ts
 │   ├── check.ts
-│   ├── connection.ts            -- resolves SQL connection string (env or Backend appsettings)
-│   └── package.json             -- scripts: setup, seed, check, build:backend, test:api
+│   ├── connection.ts               -- Resolves SQL Connection String
+│   └── package.json
 └── Frontend/
     ├── src/
     │   ├── api/
@@ -128,7 +155,7 @@ Capstone/
     │   │   ├── LineItemsTable.jsx
     │   │   └── TaxPicker.jsx
     │   ├── pages/
-    │   │   ├── LoginPage.jsx          -- Email/Password Login + New-Password Step (when tempPass) on Same Route
+    │   │   ├── LoginPage.jsx          -- Email/Password Login + New-Password Step on Same Route
     │   │   ├── AdminDashboard.jsx
     │   │   ├── UserListPage.jsx
     │   │   ├── VendorListPage.jsx
@@ -154,6 +181,7 @@ Capstone/
 
 | What | Rule | Examples |
 |------|------|---------|
+| DTO types (`DTOs/…`) | Descriptive name; no redundant `Dto` suffix; files live under `Auth/`, `Users/`, `Vendors/`, `Payments/`, `Reports/` (namespace stays `VenDot.DTOs`) | `ReportFilters`, `PreviewReportResult`, `PaymentItem` (DTO) vs `Models.PaymentItem` (entity) |
 | Files (backend) | PascalCase, full words, no abbreviations | `AuthController.cs`, `UserService.cs`, `AppDBContext.cs` |
 | Files (frontend) | PascalCase for components/pages, camelCase for api/context | `LoginPage.jsx`, `VendorPicker.jsx`, `authApi.js`, `AuthContext.jsx` |
 | Variables | readable, no abbreviations | `userId`, `vendorList`, `paymentItems`, `taxRate` |
@@ -505,16 +533,16 @@ TotalAmount  = SubTotal + TaxAmount
 | GET | `/api/reports/{id}/download?format=pdf` or `format=xlsx` | Analyst, Admin | **PDF** or **Excel**: payment **table** (same columns as preview), from filters in `Reports.FilterJson` via `GetExportRowsForReportAsync` (cap 10k rows). **JSON download removed** from the product UI. |
 
 **`Services/ReportService.cs`**
-- `PreviewAsync(filters)` — returns **`PreviewReportResultDto`** (total count + capped items as **`PaymentPreviewRowDto`**)
+- `PreviewAsync(filters)` — returns **`PreviewReportResult`** (total count + capped rows as **`PaymentPreviewRow`**)
 - `GetExportRowsForReportAsync(report)` — full export row list for PDF/XLSX (same filter logic as preview)
-- `Queue(generateReportRequest, generatedById)` — saves a Reports row (`Status = PROCESSING`), enqueues work for the background worker (see below), returns the new report ID immediately
-- `ProcessReport(reportId)` — runs inside a **scoped** service (via `IServiceScopeFactory`): queries `PaymentRequests` with filters, aggregates by report type, writes **`ReportResultJson`**, sets `Status = READY` and `CompletedAt`; on exception sets `FAILED`
-- `GetAll(userId, role)` — Analyst sees own; Admin sees all
-- `GetById(id)` — returns report status and metadata
+- `QueueAsync(generateReportRequest, generatedById)` — saves a Reports row (`Status = PROCESSING`), enqueues work for the background worker (see below), returns the new report ID immediately
+- `ProcessReportAsync(reportId)` — runs inside a **scoped** service (via `IServiceScopeFactory`): queries `PaymentRequests` with filters, aggregates by report type, writes **`ReportResultJson`**, sets `Status = READY` and `CompletedAt`; on exception sets `FAILED`
+- `GetAllAsync(userId, role)` — Analyst sees own; Admin sees all
+- `GetByIdAsync(id, …)` — returns report status and metadata
 
 **Exports — `Utils/ReportExportHelper.cs`:** QuestPDF (**PDF**) and ClosedXML (**XLSX**) render the payment table; not raw `ReportResultJson` text.
 
-**Background execution (replace raw `Task.Run`):** Register an **`IHostedService`** (e.g. `HostedWorkers/ReportBackgroundWorker.cs`) that uses a channel or queue of report IDs and, for each job, creates a scope (`scope.ServiceProvider.GetRequiredService<ReportService>()`) and calls `ProcessReport`. This avoids disposing `DbContext` incorrectly and survives the pattern better than fire-and-forget `Task.Run` on the request thread.
+**Background execution (replace raw `Task.Run`):** Register an **`IHostedService`** (e.g. `HostedWorkers/ReportBackgroundWorker.cs`) that uses a channel or queue of report IDs and, for each job, creates a scope (`scope.ServiceProvider.GetRequiredService<ReportService>()`) and calls `ProcessReportAsync`. This avoids disposing `DbContext` incorrectly and survives the pattern better than fire-and-forget `Task.Run` on the request thread.
 
 **Report Types:**
 - `Summary` — total count and total value of all matching requests
@@ -542,7 +570,7 @@ All applied filter values are saved as JSON in `Reports.FilterJson` for audit pu
 
 **`Middleware/TempPassMiddleware.cs`** — see §5.3.1. Blocks API usage until password change when the JWT indicates `must_change_password`.
 
-**`Middleware/ErrorHandler.cs`** — global exception middleware. Catches all unhandled exceptions and returns:
+**`Middleware/ErrorHandlerMiddleware.cs`** — global exception middleware. Catches all unhandled exceptions and returns:
 ```json
 { "error": "Something went wrong." }
 ```
@@ -555,7 +583,7 @@ Returns 400 for validation errors, 401 for auth failures, 403 for wrong role, 40
 - Report background worker (`IHostedService`) if using the queued report pattern (§5.9)
 - CORS policy allowing `http://localhost:5173` in development
 - `TempPassMiddleware` after authentication so claims are available
-- `ErrorHandler` middleware
+- `ErrorHandlerMiddleware`
 - `UseAuthentication()` and `UseAuthorization()` in the correct order
 - **`Database.MigrateAsync()`** on startup applies pending migrations — no seed side effects
 
@@ -779,11 +807,11 @@ Admin resets a user's password at any time later:
 ```
 Analyst clicks Generate:
   → POST /api/reports/generate with { reportType, filters }
-  → ReportService.Queue() saves a Reports row (Status = PROCESSING)
+  → ReportService.QueueAsync() saves a Reports row (Status = PROCESSING)
   → Returns the new report ID to the frontend immediately (fast — no waiting for data)
-  → **IHostedService** / queue picks up the report ID and runs `ProcessReport` inside a **new DI scope** (`IServiceScopeFactory`)
+  → **IHostedService** / queue picks up the report ID and runs `ProcessReportAsync` inside a **new DI scope** (`IServiceScopeFactory`)
 
-Background worker (ProcessReport):
+Background worker (`ProcessReportAsync`):
   → Reads the report's filter JSON from the database
   → Queries PaymentRequests applying all filters via dynamic LINQ
   → Groups and aggregates the results by the selected report type
@@ -943,7 +971,7 @@ At least one line item; quantity and unit price **> 0**; `vendorBankAccountId` m
 **Auth Context** holds only: `token`, `role`, `name`, `tempPass` (synced to `localStorage` for refresh). All other application data (vendor lists, payment details, report results) is fetched fresh from the API per page load and kept in local component state. No extra global store library is needed.
 
 ### Error Handling
-- Backend: `ErrorHandler.cs` middleware catches all unhandled exceptions and returns `{ "error": "message" }` with the appropriate HTTP status code
+- Backend: `ErrorHandlerMiddleware.cs` catches all unhandled exceptions and returns `{ "error": "message" }` with the appropriate HTTP status code
 - Frontend: the axios interceptor in `http.js` catches 4xx/5xx and surfaces the API `error` message (e.g. shared `ErrorContext` + banner in `Layout`, or handlers passed from pages); a 401 runs the registered session clear (Context + `localStorage`) and redirects to `/login`
 
 ---

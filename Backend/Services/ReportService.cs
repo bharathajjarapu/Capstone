@@ -19,7 +19,7 @@ public class ReportService
 
     public async Task<int> QueueAsync(GenerateReportRequest request, int generatedById, CancellationToken cancellationToken = default)
     {
-        var filterJson = JsonSerializer.Serialize(request.Filters ?? new ReportFiltersDto());
+        var filterJson = JsonSerializer.Serialize(request.Filters ?? new ReportFilters());
         var report = new Report
         {
             ReportType = request.ReportType,
@@ -34,13 +34,13 @@ public class ReportService
         return report.Id;
     }
 
-    public async Task<PreviewReportResultDto> PreviewAsync(ReportFiltersDto? filters, CancellationToken cancellationToken = default)
+    public async Task<PreviewReportResult> PreviewAsync(ReportFilters? filters, CancellationToken cancellationToken = default)
     {
-        var f = filters ?? new ReportFiltersDto();
+        var f = filters ?? new ReportFilters();
         var list = await LoadFilteredPaymentsAsync(f, cancellationToken);
         var total = list.Count;
         var items = list.Take(500).Select(MapToPreviewRow).ToList();
-        return new PreviewReportResultDto { TotalCount = total, Items = items };
+        return new PreviewReportResult { TotalCount = total, Items = items };
     }
 
     public async Task ProcessReportAsync(int reportId, CancellationToken cancellationToken = default)
@@ -50,7 +50,7 @@ public class ReportService
 
         try
         {
-            var filters = JsonSerializer.Deserialize<ReportFiltersDto>(report.FilterJson) ?? new ReportFiltersDto();
+            var filters = JsonSerializer.Deserialize<ReportFilters>(report.FilterJson) ?? new ReportFilters();
             var list = await LoadFilteredPaymentsAsync(filters, cancellationToken);
             var result = BuildAggregatedResult(report.ReportType, list);
             report.ReportResultJson = JsonSerializer.Serialize(result);
@@ -65,7 +65,7 @@ public class ReportService
         }
     }
 
-    private async Task<List<PaymentRequest>> LoadFilteredPaymentsAsync(ReportFiltersDto filters, CancellationToken cancellationToken)
+    private async Task<List<PaymentRequest>> LoadFilteredPaymentsAsync(ReportFilters filters, CancellationToken cancellationToken)
     {
         var query = ApplyFilters(_db.PaymentRequests
             .Include(p => p.Vendor)
@@ -75,7 +75,7 @@ public class ReportService
         return await query.ToListAsync(cancellationToken);
     }
 
-    private static PaymentPreviewRowDto MapToPreviewRow(PaymentRequest p) => new()
+    private static PaymentPreviewRow MapToPreviewRow(PaymentRequest p) => new()
     {
         Id = p.Id,
         InvoiceNo = p.InvoiceNo,
@@ -124,7 +124,7 @@ public class ReportService
         };
     }
 
-    private static IQueryable<PaymentRequest> ApplyFilters(IQueryable<PaymentRequest> query, ReportFiltersDto f)
+    private static IQueryable<PaymentRequest> ApplyFilters(IQueryable<PaymentRequest> query, ReportFilters f)
     {
         if (f.DateFrom.HasValue)
         {
@@ -174,9 +174,9 @@ public class ReportService
     }
 
     /// <summary>All matching payment rows for export (PDF/XLSX), same filters as preview; capped for safety.</summary>
-    public async Task<IReadOnlyList<PaymentPreviewRowDto>> GetExportRowsForReportAsync(Report report, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<PaymentPreviewRow>> GetExportRowsForReportAsync(Report report, CancellationToken cancellationToken = default)
     {
-        var filters = JsonSerializer.Deserialize<ReportFiltersDto>(report.FilterJson) ?? new ReportFiltersDto();
+        var filters = JsonSerializer.Deserialize<ReportFilters>(report.FilterJson) ?? new ReportFilters();
         var list = await LoadFilteredPaymentsAsync(filters, cancellationToken);
         return list.Take(10_000).Select(MapToPreviewRow).ToList();
     }

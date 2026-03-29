@@ -12,7 +12,7 @@ using VenDot.Data;
 namespace VenDot.Migrations
 {
     [DbContext(typeof(AppDBContext))]
-    [Migration("20260328234339_InitialCreate")]
+    [Migration("20260329022641_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -38,15 +38,18 @@ namespace VenDot.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("LineTotal")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("PaymentRequestId")
                         .HasColumnType("int");
 
                     b.Property<decimal>("Quantity")
-                        .HasColumnType("decimal(18,2)");
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
 
                     b.Property<decimal>("UnitPrice")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.HasKey("Id");
@@ -107,6 +110,7 @@ namespace VenDot.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("SubTotal")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<DateTime>("SubmittedAt")
@@ -116,15 +120,18 @@ namespace VenDot.Migrations
                         .HasColumnType("int");
 
                     b.Property<decimal>("TaxAmount")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<decimal>("TaxRate")
-                        .HasColumnType("decimal(18,2)");
+                        .HasPrecision(5, 4)
+                        .HasColumnType("decimal(5,4)");
 
                     b.Property<int?>("TaxTypeId")
                         .HasColumnType("int");
 
                     b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
 
                     b.Property<int>("VendorBankAccountId")
@@ -202,28 +209,6 @@ namespace VenDot.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Roles");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            Name = "Admin"
-                        },
-                        new
-                        {
-                            Id = 2,
-                            Name = "Accountant"
-                        },
-                        new
-                        {
-                            Id = 3,
-                            Name = "Manager"
-                        },
-                        new
-                        {
-                            Id = 4,
-                            Name = "Analyst"
-                        });
                 });
 
             modelBuilder.Entity("VenDot.Models.TaxType", b =>
@@ -246,45 +231,12 @@ namespace VenDot.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<decimal>("Rate")
-                        .HasColumnType("decimal(18,2)");
+                        .HasPrecision(5, 4)
+                        .HasColumnType("decimal(5,4)");
 
                     b.HasKey("Id");
 
                     b.ToTable("TaxTypes");
-
-                    b.HasData(
-                        new
-                        {
-                            Id = 1,
-                            Description = "No tax",
-                            IsActive = true,
-                            Name = "None",
-                            Rate = 0m
-                        },
-                        new
-                        {
-                            Id = 2,
-                            Description = "Goods and Services Tax 10%",
-                            IsActive = true,
-                            Name = "GST",
-                            Rate = 0.10m
-                        },
-                        new
-                        {
-                            Id = 3,
-                            Description = "Value Added Tax 15%",
-                            IsActive = true,
-                            Name = "VAT",
-                            Rate = 0.15m
-                        },
-                        new
-                        {
-                            Id = 4,
-                            Description = "Withholding Tax 5%",
-                            IsActive = true,
-                            Name = "WHT",
-                            Rate = 0.05m
-                        });
                 });
 
             modelBuilder.Entity("VenDot.Models.User", b =>
@@ -297,7 +249,8 @@ namespace VenDot.Migrations
 
                     b.Property<string>("Email")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasMaxLength(450)
+                        .HasColumnType("nvarchar(450)");
 
                     b.Property<string>("FullName")
                         .IsRequired()
@@ -321,6 +274,9 @@ namespace VenDot.Migrations
                         .HasColumnType("nvarchar(450)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("Email")
+                        .IsUnique();
 
                     b.HasIndex("RoleId");
 

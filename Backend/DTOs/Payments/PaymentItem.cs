@@ -1,6 +1,6 @@
 namespace VenDot.DTOs;
 
-public class PaymentItemDto
+public class PaymentItem
 {
     public string Description { get; set; } = string.Empty;
     public decimal Quantity { get; set; }

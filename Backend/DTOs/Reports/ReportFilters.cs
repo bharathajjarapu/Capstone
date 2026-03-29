@@ -1,6 +1,6 @@
 namespace VenDot.DTOs;
 
-public class ReportFiltersDto
+public class ReportFilters
 {
     public DateTime? DateFrom { get; set; }
     public DateTime? DateTo { get; set; }

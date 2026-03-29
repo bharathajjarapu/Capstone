@@ -19,7 +19,7 @@ public static class ReportExportHelper
         "ID", "Invoice", "Vendor", "Status", "Amount", "Submitted", "Due", "Submitted by", "Tax"
     };
 
-    public static byte[] ToPdfPaymentTable(string reportType, int reportId, IReadOnlyList<PaymentPreviewRowDto> rows)
+    public static byte[] ToPdfPaymentTable(string reportType, int reportId, IReadOnlyList<PaymentPreviewRow> rows)
     {
         return Document.Create(document =>
         {
@@ -81,7 +81,7 @@ public static class ReportExportHelper
         }).GeneratePdf();
     }
 
-    public static byte[] ToXlsxPaymentTable(string reportType, int reportId, IReadOnlyList<PaymentPreviewRowDto> rows)
+    public static byte[] ToXlsxPaymentTable(string reportType, int reportId, IReadOnlyList<PaymentPreviewRow> rows)
     {
         using var wb = new XLWorkbook();
         var ws = wb.AddWorksheet("Payments");

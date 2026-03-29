@@ -1,6 +1,6 @@
 namespace VenDot.DTOs;
 
-public class PaymentPreviewRowDto
+public class PaymentPreviewRow
 {
     public int Id { get; set; }
     public string InvoiceNo { get; set; } = string.Empty;

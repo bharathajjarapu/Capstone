@@ -9,5 +9,5 @@ public class CreatePaymentRequest
     public int? TaxTypeId { get; set; }
     public decimal? CustomTaxRate { get; set; }
     public string? Notes { get; set; }
-    public List<PaymentItemDto> Items { get; set; } = new();
+    public List<PaymentItem> Items { get; set; } = new();
 }
