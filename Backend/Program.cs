@@ -112,11 +112,6 @@ using (var scope = app.Services.CreateScope())
         throw;
     }
 
-    if (app.Environment.IsDevelopment())
-    {
-        var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Seeder");
-        await Seeder.SeedDemoAdminAsync(db, logger);
-    }
 }
 
 app.Run();

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using VenDot.DTOs;
 using VenDot.Services;
+using VenDot.Utils;
 
 namespace VenDot.Controllers;
 
@@ -29,6 +30,14 @@ public class ReportController : ControllerBase
         return Ok(new { id });
     }
 
+    [HttpPost("preview")]
+    [Authorize(Roles = "Analyst")]
+    public async Task<IActionResult> Preview([FromBody] PreviewReportRequest? request, CancellationToken cancellationToken)
+    {
+        var result = await _reportService.PreviewAsync(request?.Filters, cancellationToken);
+        return Ok(result);
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
     {
@@ -45,10 +54,27 @@ public class ReportController : ControllerBase
     }
 
     [HttpGet("{id:int}/download")]
-    public async Task<IActionResult> Download(int id, CancellationToken cancellationToken)
+    public async Task<IActionResult> Download(int id, [FromQuery] string? format, CancellationToken cancellationToken)
     {
-        var json = await _reportService.DownloadAsync(id, UserId, Role, cancellationToken);
-        if (json == null) return NotFound();
-        return Content(json, "application/json");
+        var fmt = (format ?? "pdf").Trim().ToLowerInvariant();
+        if (fmt is not ("pdf" or "xlsx")) return BadRequest(new { error = "format must be pdf or xlsx" });
+
+        var report = await _reportService.GetByIdAsync(id, UserId, Role, cancellationToken);
+        if (report == null || report.Status != "READY" || string.IsNullOrEmpty(report.ReportResultJson)) return NotFound();
+
+        var rows = await _reportService.GetExportRowsForReportAsync(report, cancellationToken);
+
+        return fmt switch
+        {
+            "pdf" => File(
+                ReportExportHelper.ToPdfPaymentTable(report.ReportType, report.Id, rows),
+                "application/pdf",
+                $"report-{id}.pdf"),
+            "xlsx" => File(
+                ReportExportHelper.ToXlsxPaymentTable(report.ReportType, report.Id, rows),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                $"report-{id}.xlsx"),
+            _ => BadRequest()
+        };
     }
 }

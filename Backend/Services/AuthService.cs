@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.Tokens;
 using VenDot.Data;
 using VenDot.DTOs;
 using VenDot.Models;
+using VenDot.Utils;
 
 namespace VenDot.Services;
 
@@ -20,9 +21,11 @@ public class AuthService
         _configuration = configuration;
     }
 
-    public async Task<LoginResponse?> LoginAsync(string username, string password, CancellationToken cancellationToken = default)
+    public async Task<LoginResponse?> LoginAsync(string email, string password, CancellationToken cancellationToken = default)
     {
-        var user = await _db.Users.Include(u => u.Role).FirstOrDefaultAsync(u => u.Username == username, cancellationToken);
+        if (string.IsNullOrWhiteSpace(email)) return null;
+        var normalized = EmailNormalizer.Normalize(email);
+        var user = await _db.Users.Include(u => u.Role).FirstOrDefaultAsync(u => u.Email == normalized, cancellationToken);
         if (user == null || !user.IsActive) return null;
         if (!BCrypt.Net.BCrypt.Verify(password, user.PasswordHash)) return null;
 

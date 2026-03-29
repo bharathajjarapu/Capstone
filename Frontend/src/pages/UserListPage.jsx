@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   createUser,
-  deactivateUser,
+  deleteUser,
   getUsers,
   resetPassword,
   updateUser,
@@ -17,7 +17,6 @@ const emptyUser = {
   username: "",
   email: "",
   role: "Accountant",
-  tempPassword: "",
 };
 
 export default function UserListPage() {
@@ -29,7 +28,7 @@ export default function UserListPage() {
   const [form, setForm] = useState(emptyUser);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetId, setResetId] = useState(null);
-  const [resetPass, setResetPass] = useState("");
+  const [reveal, setReveal] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -61,7 +60,6 @@ export default function UserListPage() {
       username: row.username,
       email: row.email,
       role: row.role,
-      tempPassword: "",
     });
     setModalOpen(true);
   }
@@ -75,45 +73,62 @@ export default function UserListPage() {
           email: form.email,
           role: form.role,
         });
+        setModalOpen(false);
+        await load();
       } else {
-        await createUser({
+        const created = await createUser({
           fullName: form.fullName,
           username: form.username,
           email: form.email,
           role: form.role,
-          tempPassword: form.tempPassword,
         });
+        setModalOpen(false);
+        await load();
+        const pw = created?.generatedTempPassword;
+        if (pw) {
+          setReveal({ title: "User created", password: pw });
+        }
       }
-      setModalOpen(false);
-      await load();
     } catch {
       setError("Save failed.");
     }
   }
 
-  async function deactivate(row) {
-    if (!window.confirm(`Deactivate ${row.username}?`)) return;
+  async function softDelete(row) {
+    if (
+      !window.confirm(
+        `Delete ${row.username}? The account will be deactivated; history is kept.`
+      )
+    )
+      return;
     try {
-      await deactivateUser(row.id);
+      await deleteUser(row.id);
       await load();
     } catch {
-      setError("Deactivate failed.");
+      setError("Delete failed.");
     }
   }
 
   async function submitReset() {
     if (!resetId) return;
     try {
-      await resetPassword(resetId, resetPass);
+      const res = await resetPassword(resetId);
       setResetOpen(false);
-      setResetPass("");
+      setResetId(null);
       await load();
+      const pw = res?.generatedTempPassword;
+      if (pw) {
+        setReveal({ title: "Password reset", password: pw });
+      }
     } catch {
       setError("Reset failed.");
     }
   }
 
-  const columns = [
+  const activeRows = useMemo(() => rows.filter((r) => r.isActive), [rows]);
+  const deletedRows = useMemo(() => rows.filter((r) => !r.isActive), [rows]);
+
+  const activeColumns = [
     { key: "fullName", label: "Name" },
     { key: "username", label: "Username" },
     { key: "email", label: "Email" },
@@ -121,7 +136,7 @@ export default function UserListPage() {
     {
       key: "isActive",
       label: "Status",
-      render: (r) => <StatusBadge status={r.isActive ? "Active" : "Inactive"} />,
+      render: (r) => <StatusBadge status="Active" />,
     },
     {
       key: "actions",
@@ -131,15 +146,14 @@ export default function UserListPage() {
           <button type="button" className="text-sky-700 hover:underline" onClick={() => openEdit(r)}>
             Edit
           </button>
-          <button type="button" className="text-sky-700 hover:underline" onClick={() => deactivate(r)}>
-            Deactivate
+          <button type="button" className="text-sky-700 hover:underline" onClick={() => softDelete(r)}>
+            Delete
           </button>
           <button
             type="button"
             className="text-sky-700 hover:underline"
             onClick={() => {
               setResetId(r.id);
-              setResetPass("");
               setResetOpen(true);
             }}
           >
@@ -147,6 +161,18 @@ export default function UserListPage() {
           </button>
         </div>
       ),
+    },
+  ];
+
+  const deletedColumns = [
+    { key: "fullName", label: "Name" },
+    { key: "username", label: "Username" },
+    { key: "email", label: "Email" },
+    { key: "role", label: "Role" },
+    {
+      key: "isActive",
+      label: "Status",
+      render: () => <StatusBadge status="Inactive" />,
     },
   ];
 
@@ -166,8 +192,26 @@ export default function UserListPage() {
       {loading ? (
         <p className="mt-4 text-sm text-neutral-600">Loading…</p>
       ) : (
-        <div className="mt-4">
-          <DataTable columns={columns} rows={rows} />
+        <div className="mt-6 space-y-8">
+          <section>
+            <h2 className="text-base font-semibold text-neutral-900">Active users</h2>
+            <p className="mt-1 text-sm text-neutral-600">Users who can sign in.</p>
+            <div className="mt-3">
+              <DataTable columns={activeColumns} rows={activeRows} />
+            </div>
+          </section>
+
+          {deletedRows.length > 0 ? (
+            <section className="rounded-lg border border-neutral-200 bg-neutral-50/80 p-4">
+              <h2 className="text-base font-semibold text-neutral-800">Deleted users</h2>
+              <p className="mt-1 text-sm text-neutral-600">
+                Soft-deleted accounts (deactivated). History is kept; these users cannot sign in.
+              </p>
+              <div className="mt-3">
+                <DataTable columns={deletedColumns} rows={deletedRows} />
+              </div>
+            </section>
+          ) : null}
         </div>
       )}
 
@@ -217,16 +261,9 @@ export default function UserListPage() {
             </select>
           </div>
           {!editingId && (
-            <div>
-              <label className="block text-sm font-medium">Temp password</label>
-              <input
-                type="password"
-                className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
-                value={form.tempPassword}
-                onChange={(e) => setForm({ ...form, tempPassword: e.target.value })}
-                required
-              />
-            </div>
+            <p className="text-sm text-neutral-600">
+              A secure temporary password will be generated automatically. Share it with the user once.
+            </p>
           )}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="rounded-md px-3 py-2 text-sm" onClick={() => setModalOpen(false)}>
@@ -241,13 +278,9 @@ export default function UserListPage() {
 
       <Modal title="Reset password" open={resetOpen} onClose={() => setResetOpen(false)}>
         <div className="space-y-3">
-          <input
-            type="password"
-            className="w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
-            placeholder="New temp password"
-            value={resetPass}
-            onChange={(e) => setResetPass(e.target.value)}
-          />
+          <p className="text-sm text-neutral-700">
+            A new random temporary password will be generated. The user must sign in and change it.
+          </p>
           <div className="flex justify-end gap-2">
             <button type="button" className="rounded-md px-3 py-2 text-sm" onClick={() => setResetOpen(false)}>
               Cancel
@@ -257,10 +290,39 @@ export default function UserListPage() {
               className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white"
               onClick={submitReset}
             >
-              Reset
+              Generate and reset
             </button>
           </div>
         </div>
+      </Modal>
+
+      <Modal title={reveal?.title ?? "Temporary password"} open={!!reveal} onClose={() => setReveal(null)}>
+        {reveal && (
+          <div className="space-y-3">
+            <p className="text-sm text-neutral-700">Copy this now — it will not be shown again.</p>
+            <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 font-mono text-sm break-all">
+              {reveal.password}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(reveal.password);
+                  } catch {
+                    setError("Could not copy.");
+                  }
+                }}
+              >
+                Copy
+              </button>
+              <button type="button" className="rounded-md px-3 py-2 text-sm" onClick={() => setReveal(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

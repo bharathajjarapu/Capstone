@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { downloadReport, generateReport, getReportById, getReports } from "../api/reportApi.js";
+import {
+  generateReport,
+  getReportById,
+  getReports,
+  previewReport,
+  triggerReportDownload,
+} from "../api/reportApi.js";
 import { getTaxTypes } from "../api/taxApi.js";
 import { getVendors } from "../api/vendorApi.js";
 import { useAuth } from "../context/AuthContext.jsx";
@@ -65,6 +71,8 @@ export default function ReportListPage() {
     maxAmount: "",
     taxTypeIds: [],
   });
+  const [previewResult, setPreviewResult] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -124,6 +132,21 @@ export default function ReportListPage() {
     return () => clearInterval(timer);
   }, [processingKey]);
 
+  async function runPreview() {
+    setError("");
+    setPreviewLoading(true);
+    try {
+      const filters = buildFilters(filterForm);
+      const res = await previewReport(filters);
+      setPreviewResult(res);
+    } catch {
+      setError("Preview failed.");
+      setPreviewResult(null);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
   async function generate() {
     setError("");
     try {
@@ -133,21 +156,6 @@ export default function ReportListPage() {
       setRows((prev) => [row, ...prev]);
     } catch {
       setError("Could not queue report.");
-    }
-  }
-
-  async function download(id) {
-    try {
-      const text = await downloadReport(id);
-      const blob = new Blob([text], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `report-${id}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setError("Download failed.");
     }
   }
 
@@ -177,6 +185,33 @@ export default function ReportListPage() {
       return { ...prev, taxTypeIds: [...set] };
     });
   }
+
+  const previewColumns = useMemo(
+    () => [
+      { key: "id", label: "ID" },
+      { key: "invoiceNo", label: "Invoice" },
+      { key: "vendorName", label: "Vendor" },
+      { key: "status", label: "Status" },
+      {
+        key: "totalAmount",
+        label: "Amount",
+        render: (r) => (r.totalAmount != null ? Number(r.totalAmount).toFixed(2) : "—"),
+      },
+      {
+        key: "submittedAt",
+        label: "Submitted",
+        render: (r) => (r.submittedAt ? new Date(r.submittedAt).toLocaleString() : "—"),
+      },
+      {
+        key: "dueDate",
+        label: "Due",
+        render: (r) => (r.dueDate ? String(r.dueDate) : "—"),
+      },
+      { key: "submittedByName", label: "Submitted by" },
+      { key: "taxTypeName", label: "Tax" },
+    ],
+    []
+  );
 
   const columns = useMemo(
     () => [
@@ -210,14 +245,30 @@ export default function ReportListPage() {
         label: "",
         render: (r) =>
           r.status === "READY" ? (
-            <button type="button" className="text-sky-700 hover:underline" onClick={() => download(r.id)}>
-              Download
-            </button>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <button
+                type="button"
+                className="text-sky-700 hover:underline"
+                onClick={() => triggerReportDownload(r.id, "pdf")}
+              >
+                PDF
+              </button>
+              <button
+                type="button"
+                className="text-sky-700 hover:underline"
+                onClick={() => triggerReportDownload(r.id, "xlsx")}
+              >
+                XLSX
+              </button>
+            </div>
           ) : null,
       },
     ],
     []
   );
+
+  const previewItems = previewResult?.items ?? previewResult?.Items ?? [];
+  const previewTotal = previewResult?.totalCount ?? previewResult?.TotalCount ?? 0;
 
   return (
     <div>
@@ -226,31 +277,7 @@ export default function ReportListPage() {
 
       {role === "Analyst" && (
         <div className="mt-4 space-y-4 rounded-lg border border-neutral-200 bg-white p-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="block text-sm font-medium">Report type</label>
-              <select
-                className="mt-1 rounded-md border border-neutral-200 px-3 py-2 text-sm"
-                value={reportType}
-                onChange={(e) => setReportType(e.target.value)}
-              >
-                {reportTypes.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white"
-              onClick={generate}
-            >
-              Generate
-            </button>
-          </div>
-
-          <details className="text-sm">
+          <details className="text-sm" open>
             <summary className="cursor-pointer font-medium text-neutral-700">Filters (optional)</summary>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <label className="block">
@@ -368,6 +395,56 @@ export default function ReportListPage() {
               />
             </label>
           </details>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              className="rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-900"
+              onClick={runPreview}
+              disabled={previewLoading}
+            >
+              {previewLoading ? "Loading preview…" : "Preview data"}
+            </button>
+            <p className="text-sm text-neutral-600">
+              Set filters, preview matching payment rows, then generate a report from the same filters.
+            </p>
+          </div>
+
+          {previewResult != null && (
+            <div className="space-y-2">
+              <p className="text-sm text-neutral-700">
+                <span className="font-medium">{previewTotal}</span> payment(s) matched
+                {previewTotal > 500 ? <span className="text-amber-700"> (showing first 500)</span> : null}
+              </p>
+              <div className="max-h-80 overflow-auto rounded border border-neutral-100">
+                <DataTable columns={previewColumns} rows={previewItems} />
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-end gap-3 border-t border-neutral-100 pt-4">
+            <div>
+              <label className="block text-sm font-medium">Report type</label>
+              <select
+                className="mt-1 rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                value={reportType}
+                onChange={(e) => setReportType(e.target.value)}
+              >
+                {reportTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              className="rounded-md bg-neutral-900 px-3 py-2 text-sm font-medium text-white"
+              onClick={generate}
+            >
+              Generate report
+            </button>
+          </div>
         </div>
       )}
 

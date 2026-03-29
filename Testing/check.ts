@@ -1,9 +1,6 @@
 /**
- * Direct API checks for VenDot backend (run with Bun).
- * Requires a running API — see Readme.md for connection and ports.
- * Usage: bun run scripts/check.ts  or  bun run check
- * Env: VENDOT_API_URL (default http://localhost:5261 — match Frontend `VITE_API_URL`),
- *      VENDOT_ADMIN_USER, VENDOT_ADMIN_PASS
+ * API checks for VenDot (Bun). Requires the backend running (default http://localhost:5261).
+ * Env: VENDOT_API_URL, VENDOT_ADMIN_EMAIL, VENDOT_ADMIN_PASS
  */
 const baseUrl = (process.env.VENDOT_API_URL ?? "http://localhost:5261").replace(/\/$/, "");
 
@@ -33,9 +30,18 @@ async function req(
   return { status: res.status, json, text };
 }
 
+/** GET without parsing JSON (for binary PDF/XLSX bodies). */
+async function reqGetStatus(path: string, token?: string): Promise<number> {
+  const headers: Record<string, string> = { Accept: "*/*" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${baseUrl}${path}`, { headers });
+  await res.arrayBuffer();
+  return res.status;
+}
+
 async function main() {
   const suffix = Date.now().toString(36);
-  const adminUser = process.env.VENDOT_ADMIN_USER ?? "admin";
+  const adminEmail = process.env.VENDOT_ADMIN_EMAIL ?? "admin@ven.local";
   const adminPass = process.env.VENDOT_ADMIN_PASS ?? "Admin123!";
 
   let r = await req("/");
@@ -43,10 +49,10 @@ async function main() {
   const root = r.json as { message?: string };
   assert(typeof root?.message === "string", "GET / should return message");
 
-  r = await req("/api/auth/login", { method: "POST", body: { username: adminUser, password: "wrong" } });
+  r = await req("/api/auth/login", { method: "POST", body: { email: adminEmail, password: "wrong" } });
   assert(r.status === 401, "bad login should be 401");
 
-  r = await req("/api/auth/login", { method: "POST", body: { username: adminUser, password: adminPass } });
+  r = await req("/api/auth/login", { method: "POST", body: { email: adminEmail, password: adminPass } });
   assert(r.status === 200, "admin login should succeed");
   const adminLogin = r.json as { token: string; role: string };
   const adminToken = adminLogin.token;
@@ -58,79 +64,118 @@ async function main() {
   const accUser = `acct_${suffix}`;
   const mgrUser = `mgr_${suffix}`;
   const anlUser = `anl_${suffix}`;
-  const tempPw = "TempPass1!";
 
   r = await req("/api/users", {
     method: "POST",
     token: adminToken,
     body: {
-      fullName: "API Accountant",
+      fullName: "Arjun Mehta",
       username: accUser,
-      email: `${accUser}@t.local`,
+      email: `${accUser}@ven.local`,
       role: "Accountant",
-      tempPassword: tempPw,
     },
   });
   assert(r.status === 201 || r.status === 200, `create accountant: ${r.status}`);
+  const accTempPw = (r.json as { generatedTempPassword: string }).generatedTempPassword;
+  assert(typeof accTempPw === "string" && accTempPw.length > 0, "generated temp password (accountant)");
 
   r = await req("/api/users", {
     method: "POST",
     token: adminToken,
     body: {
-      fullName: "API Manager",
+      fullName: "Kavita Joshi",
       username: mgrUser,
-      email: `${mgrUser}@t.local`,
+      email: `${mgrUser}@ven.local`,
       role: "Manager",
-      tempPassword: tempPw,
     },
   });
   assert(r.status === 201 || r.status === 200, `create manager: ${r.status}`);
+  const mgrTempPw = (r.json as { generatedTempPassword: string }).generatedTempPassword;
+  assert(typeof mgrTempPw === "string" && mgrTempPw.length > 0, "generated temp password (manager)");
 
   r = await req("/api/users", {
     method: "POST",
     token: adminToken,
     body: {
-      fullName: "API Analyst",
+      fullName: "Siddharth Bose",
       username: anlUser,
-      email: `${anlUser}@t.local`,
+      email: `${anlUser}@ven.local`,
       role: "Analyst",
-      tempPassword: tempPw,
     },
   });
   assert(r.status === 201 || r.status === 200, `create analyst: ${r.status}`);
+  const anlTempPw = (r.json as { generatedTempPassword: string }).generatedTempPassword;
+  assert(typeof anlTempPw === "string" && anlTempPw.length > 0, "generated temp password (analyst)");
 
-  async function loginAndSetPassword(u: string, p: string, finalPw: string) {
-    let login = await req("/api/auth/login", { method: "POST", body: { username: u, password: p } });
-    assert(login.status === 200, `login ${u}`);
-    const first = login.json as { token: string; tempPass: boolean };
+  r = await req("/api/users", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      fullName: "Riya Malhotra",
+      username: `del_${suffix}`,
+      email: `del_${suffix}@ven.local`,
+      role: "Accountant",
+    },
+  });
+  assert(r.status === 201 || r.status === 200, "create user for delete test");
+  const delId = (r.json as { id: number }).id;
+  r = await req(`/api/users/${delId}`, { method: "DELETE", token: adminToken });
+  assert(r.status === 204, `soft delete user: ${r.status}`);
+  r = await req("/api/users", { token: adminToken });
+  assert(r.status === 200, "GET users after delete");
+  const userRows = r.json as { username: string; isActive: boolean }[];
+  const deletedRow = userRows.find((u) => u.username === `del_${suffix}`);
+  assert(deletedRow && deletedRow.isActive === false, "deleted user is inactive");
+
+  r = await req("/api/users", {
+    method: "POST",
+    token: adminToken,
+    body: {
+      fullName: "Aditya Khanna",
+      username: `rst_${suffix}`,
+      email: `rst_${suffix}@ven.local`,
+      role: "Accountant",
+    },
+  });
+  assert(r.status === 201 || r.status === 200, "create user for reset test");
+  const rstId = (r.json as { id: number }).id;
+  r = await req(`/api/users/${rstId}/reset-password`, { method: "PATCH", token: adminToken, body: {} });
+  assert(r.status === 200, `admin reset password: ${r.status}`);
+  const resetPw = (r.json as { generatedTempPassword: string }).generatedTempPassword;
+  assert(typeof resetPw === "string" && resetPw.length > 0, "reset returns generated temp password");
+
+  async function loginAndSetPassword(email: string, p: string, finalPw: string) {
+    let loginRes = await req("/api/auth/login", { method: "POST", body: { email, password: p } });
+    assert(loginRes.status === 200, `login ${email}`);
+    const first = loginRes.json as { token: string; tempPass: boolean };
     assert(first.tempPass === true, "should be temp pass");
     const ch = await req("/api/auth/change-password", {
       method: "POST",
       token: first.token,
       body: { newPassword: finalPw },
     });
-    assert(ch.status === 200, `change-password ${u}`);
+    assert(ch.status === 200, `change-password ${email}`);
     return (ch.json as { token: string }).token;
   }
 
   const finalPw = "FinalPass1!";
-  const accToken = await loginAndSetPassword(accUser, tempPw, finalPw);
-  const mgrToken = await loginAndSetPassword(mgrUser, tempPw, finalPw);
-  const anlToken = await loginAndSetPassword(anlUser, tempPw, finalPw);
+  const accToken = await loginAndSetPassword(`${accUser}@ven.local`, accTempPw, finalPw);
+  const mgrToken = await loginAndSetPassword(`${mgrUser}@ven.local`, mgrTempPw, finalPw);
+  const anlToken = await loginAndSetPassword(`${anlUser}@ven.local`, anlTempPw, finalPw);
 
   r = await req("/api/payments", { token: adminToken });
   assert(r.status === 403, "admin should not list payments");
 
-  const vendorName = `Vendor_${suffix}`;
+  const vendorName = `Dell India Test ${suffix}`;
   r = await req("/api/vendors", {
     method: "POST",
     token: adminToken,
     body: {
       name: vendorName,
-      contactName: "C",
-      email: "v@v.local",
-      phone: "1",
-      address: "A",
+      contactName: "Neha Kapoor",
+      email: `vendor.${suffix}@ven.local`,
+      phone: "+91-98765-43210",
+      address: "Tower B, Cyber City, Gurugram 122002, India",
     },
   });
   assert(r.status === 201, `create vendor ${r.status}`);
@@ -140,10 +185,10 @@ async function main() {
     method: "POST",
     token: adminToken,
     body: {
-      bankName: "Bank",
-      accountName: "Main",
-      accountNo: "123",
-      routingNo: "456",
+      bankName: "HDFC Bank",
+      accountName: "Vendor Operating",
+      accountNo: "50100987654321",
+      routingNo: "HDFC0000999",
       isDefault: true,
     },
   });
@@ -185,6 +230,16 @@ async function main() {
   });
   assert(r.status === 200, "approve");
 
+  r = await req("/api/reports/preview", {
+    method: "POST",
+    token: anlToken,
+    body: { filters: { statuses: ["APPROVED"] } },
+  });
+  assert(r.status === 200, "preview report data");
+  const preview = r.json as { totalCount?: number; items?: unknown[] };
+  assert(typeof preview.totalCount === "number", "preview totalCount");
+  assert(Array.isArray(preview.items), "preview items array");
+
   r = await req("/api/reports/generate", {
     method: "POST",
     token: anlToken,
@@ -203,8 +258,10 @@ async function main() {
   }
   assert(status === "READY", `report should be READY, got ${status}`);
 
-  r = await req(`/api/reports/${reportId}/download`, { token: anlToken });
-  assert(r.status === 200, "download report");
+  const pdfStatus = await reqGetStatus(`/api/reports/${reportId}/download?format=pdf`, anlToken);
+  assert(pdfStatus === 200, "download report pdf");
+  const xlsxStatus = await reqGetStatus(`/api/reports/${reportId}/download?format=xlsx`, anlToken);
+  assert(xlsxStatus === 200, "download report xlsx");
 
   r = await req("/api/reports/generate", {
     method: "POST",
@@ -213,10 +270,10 @@ async function main() {
   });
   assert(r.status === 403, "admin cannot generate (Analyst only)");
 
-  console.log("check: all checks passed.");
+  console.log("All checks passed.");
 }
 
 main().catch((e) => {
-  console.error("check failed:", e);
+  console.error("Failed:", e);
   process.exit(1);
 });

@@ -34,6 +34,15 @@ public class ReportService
         return report.Id;
     }
 
+    public async Task<PreviewReportResultDto> PreviewAsync(ReportFiltersDto? filters, CancellationToken cancellationToken = default)
+    {
+        var f = filters ?? new ReportFiltersDto();
+        var list = await LoadFilteredPaymentsAsync(f, cancellationToken);
+        var total = list.Count;
+        var items = list.Take(500).Select(MapToPreviewRow).ToList();
+        return new PreviewReportResultDto { TotalCount = total, Items = items };
+    }
+
     public async Task ProcessReportAsync(int reportId, CancellationToken cancellationToken = default)
     {
         var report = await _db.Reports.FindAsync(new object[] { reportId }, cancellationToken);
@@ -42,45 +51,8 @@ public class ReportService
         try
         {
             var filters = JsonSerializer.Deserialize<ReportFiltersDto>(report.FilterJson) ?? new ReportFiltersDto();
-            var query = ApplyFilters(_db.PaymentRequests
-                .Include(p => p.Vendor)
-                .Include(p => p.SubmittedBy)
-                .AsQueryable(), filters);
-
-            var list = await query.ToListAsync(cancellationToken);
-            object result = report.ReportType switch
-            {
-                "Summary" => new
-                {
-                    totalCount = list.Count,
-                    totalValue = list.Sum(p => p.TotalAmount)
-                },
-                "ByVendor" => list
-                    .GroupBy(p => p.Vendor!.Name)
-                    .Select(g => new { vendorName = g.Key, count = g.Count(), totalValue = g.Sum(x => x.TotalAmount) })
-                    .ToList(),
-                "ByStatus" => list
-                    .GroupBy(p => p.Status)
-                    .Select(g => new { status = g.Key, count = g.Count(), totalValue = g.Sum(x => x.TotalAmount) })
-                    .ToList(),
-                "ByAccountant" => list
-                    .GroupBy(p => p.SubmittedBy!.FullName)
-                    .Select(g => new { accountantName = g.Key, count = g.Count(), totalValue = g.Sum(x => x.TotalAmount) })
-                    .ToList(),
-                "ByMonth" => list
-                    .GroupBy(p => new { p.SubmittedAt.Year, p.SubmittedAt.Month })
-                    .Select(g => new
-                    {
-                        year = g.Key.Year,
-                        month = g.Key.Month,
-                        count = g.Count(),
-                        totalValue = g.Sum(x => x.TotalAmount)
-                    })
-                    .OrderBy(x => x.year).ThenBy(x => x.month)
-                    .ToList(),
-                _ => new { error = "Unknown report type" }
-            };
-
+            var list = await LoadFilteredPaymentsAsync(filters, cancellationToken);
+            var result = BuildAggregatedResult(report.ReportType, list);
             report.ReportResultJson = JsonSerializer.Serialize(result);
             report.Status = "READY";
             report.CompletedAt = DateTime.UtcNow;
@@ -91,6 +63,65 @@ public class ReportService
             report.Status = "FAILED";
             await _db.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private async Task<List<PaymentRequest>> LoadFilteredPaymentsAsync(ReportFiltersDto filters, CancellationToken cancellationToken)
+    {
+        var query = ApplyFilters(_db.PaymentRequests
+            .Include(p => p.Vendor)
+            .Include(p => p.SubmittedBy)
+            .Include(p => p.TaxType)
+            .AsQueryable(), filters);
+        return await query.ToListAsync(cancellationToken);
+    }
+
+    private static PaymentPreviewRowDto MapToPreviewRow(PaymentRequest p) => new()
+    {
+        Id = p.Id,
+        InvoiceNo = p.InvoiceNo,
+        VendorName = p.Vendor?.Name ?? "",
+        Status = p.Status,
+        TotalAmount = p.TotalAmount,
+        SubmittedAt = p.SubmittedAt,
+        DueDate = p.DueDate,
+        SubmittedByName = p.SubmittedBy?.FullName ?? "",
+        TaxTypeName = p.TaxType?.Name
+    };
+
+    internal static object BuildAggregatedResult(string reportType, List<PaymentRequest> list)
+    {
+        return reportType switch
+        {
+            "Summary" => new
+            {
+                totalCount = list.Count,
+                totalValue = list.Sum(p => p.TotalAmount)
+            },
+            "ByVendor" => list
+                .GroupBy(p => p.Vendor!.Name)
+                .Select(g => new { vendorName = g.Key, count = g.Count(), totalValue = g.Sum(x => x.TotalAmount) })
+                .ToList(),
+            "ByStatus" => list
+                .GroupBy(p => p.Status)
+                .Select(g => new { status = g.Key, count = g.Count(), totalValue = g.Sum(x => x.TotalAmount) })
+                .ToList(),
+            "ByAccountant" => list
+                .GroupBy(p => p.SubmittedBy!.FullName)
+                .Select(g => new { accountantName = g.Key, count = g.Count(), totalValue = g.Sum(x => x.TotalAmount) })
+                .ToList(),
+            "ByMonth" => list
+                .GroupBy(p => new { p.SubmittedAt.Year, p.SubmittedAt.Month })
+                .Select(g => new
+                {
+                    year = g.Key.Year,
+                    month = g.Key.Month,
+                    count = g.Count(),
+                    totalValue = g.Sum(x => x.TotalAmount)
+                })
+                .OrderBy(x => x.year).ThenBy(x => x.month)
+                .ToList(),
+            _ => new { error = "Unknown report type" }
+        };
     }
 
     private static IQueryable<PaymentRequest> ApplyFilters(IQueryable<PaymentRequest> query, ReportFiltersDto f)
@@ -142,9 +173,11 @@ public class ReportService
         return r;
     }
 
-    public async Task<string?> DownloadAsync(int id, int userId, string role, CancellationToken cancellationToken = default)
+    /// <summary>All matching payment rows for export (PDF/XLSX), same filters as preview; capped for safety.</summary>
+    public async Task<IReadOnlyList<PaymentPreviewRowDto>> GetExportRowsForReportAsync(Report report, CancellationToken cancellationToken = default)
     {
-        var r = await GetByIdAsync(id, userId, role, cancellationToken);
-        return r?.ReportResultJson;
+        var filters = JsonSerializer.Deserialize<ReportFiltersDto>(report.FilterJson) ?? new ReportFiltersDto();
+        var list = await LoadFilteredPaymentsAsync(filters, cancellationToken);
+        return list.Take(10_000).Select(MapToPreviewRow).ToList();
     }
 }

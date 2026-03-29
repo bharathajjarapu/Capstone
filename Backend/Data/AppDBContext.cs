@@ -18,21 +18,11 @@ public class AppDBContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Role>().HasData(
-            new Role { Id = 1, Name = "Admin" },
-            new Role { Id = 2, Name = "Accountant" },
-            new Role { Id = 3, Name = "Manager" },
-            new Role { Id = 4, Name = "Analyst" });
-
-        modelBuilder.Entity<TaxType>().HasData(
-            new TaxType { Id = 1, Name = "None", Rate = 0m, Description = "No tax", IsActive = true },
-            new TaxType { Id = 2, Name = "GST", Rate = 0.10m, Description = "Goods and Services Tax 10%", IsActive = true },
-            new TaxType { Id = 3, Name = "VAT", Rate = 0.15m, Description = "Value Added Tax 15%", IsActive = true },
-            new TaxType { Id = 4, Name = "WHT", Rate = 0.05m, Description = "Withholding Tax 5%", IsActive = true });
-
         modelBuilder.Entity<User>(e =>
         {
+            e.Property(u => u.Email).HasMaxLength(450);
             e.HasIndex(u => u.Username).IsUnique();
+            e.HasIndex(u => u.Email).IsUnique();
             e.HasOne(u => u.Role).WithMany(r => r.Users).HasForeignKey(u => u.RoleId);
         });
 

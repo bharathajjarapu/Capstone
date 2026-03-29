@@ -21,7 +21,7 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest request, CancellationToken cancellationToken)
     {
-        var result = await _authService.LoginAsync(request.Username, request.Password, cancellationToken);
+        var result = await _authService.LoginAsync(request.Email, request.Password, cancellationToken);
         if (result == null) return Unauthorized(new { error = "Invalid credentials." });
         return Ok(result);
     }

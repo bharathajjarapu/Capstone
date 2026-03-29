@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -220,28 +220,6 @@ namespace VenDot.Migrations
                         principalTable: "PaymentRequests",
                         principalColumn: "Id",
                         onDelete: ReferentialAction.Cascade);
-                });
-
-            migrationBuilder.InsertData(
-                table: "Roles",
-                columns: new[] { "Id", "Name" },
-                values: new object[,]
-                {
-                    { 1, "Admin" },
-                    { 2, "Accountant" },
-                    { 3, "Manager" },
-                    { 4, "Analyst" }
-                });
-
-            migrationBuilder.InsertData(
-                table: "TaxTypes",
-                columns: new[] { "Id", "Description", "IsActive", "Name", "Rate" },
-                values: new object[,]
-                {
-                    { 1, "No tax", true, "None", 0m },
-                    { 2, "Goods and Services Tax 10%", true, "GST", 0.10m },
-                    { 3, "Value Added Tax 15%", true, "VAT", 0.15m },
-                    { 4, "Withholding Tax 5%", true, "WHT", 0.05m }
                 });
 
             migrationBuilder.CreateIndex(

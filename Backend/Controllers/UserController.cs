@@ -24,10 +24,10 @@ public class UserController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<ActionResult<UserResponse>> Create([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
+    public async Task<ActionResult<UserCreateResponse>> Create([FromBody] CreateUserRequest request, CancellationToken cancellationToken)
     {
         var created = await _userService.CreateAsync(request, cancellationToken);
-        if (created == null) return BadRequest(new { error = "Invalid role or duplicate username." });
+        if (created == null) return BadRequest(new { error = "Invalid role, duplicate username, or duplicate email." });
         return CreatedAtAction(nameof(GetAll), new { id = created.Id }, created);
     }
 
@@ -46,10 +46,19 @@ public class UserController : ControllerBase
         return NoContent();
     }
 
-    [HttpPatch("{id:int}/reset-password")]
-    public async Task<IActionResult> ResetPassword(int id, [FromBody] ResetPasswordRequest request, CancellationToken cancellationToken)
+    /// <summary>Soft-delete: sets the user inactive (history preserved).</summary>
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
     {
-        if (!await _userService.ResetPasswordAsync(id, request.TempPassword, cancellationToken)) return NotFound();
+        if (!await _userService.DeactivateAsync(id, cancellationToken)) return NotFound();
         return NoContent();
+    }
+
+    [HttpPatch("{id:int}/reset-password")]
+    public async Task<ActionResult<ResetPasswordResponse>> ResetPassword(int id, [FromBody] ResetPasswordRequest? request, CancellationToken cancellationToken)
+    {
+        var result = await _userService.ResetPasswordAsync(id, request?.TempPassword, cancellationToken);
+        if (result == null) return NotFound();
+        return Ok(result);
     }
 }

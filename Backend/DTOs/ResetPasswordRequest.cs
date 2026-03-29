@@ -2,5 +2,6 @@ namespace VenDot.DTOs;
 
 public class ResetPasswordRequest
 {
-    public string TempPassword { get; set; } = string.Empty;
+    /// <summary>Optional. If empty, the server generates a secure temp password.</summary>
+    public string? TempPassword { get; set; }
 }

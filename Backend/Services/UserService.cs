@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using VenDot.Data;
 using VenDot.DTOs;
 using VenDot.Models;
+using VenDot.Utils;
 
 namespace VenDot.Services;
 
@@ -31,32 +32,39 @@ public class UserService
             .ToListAsync(cancellationToken);
     }
 
-    public async Task<UserResponse?> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken = default)
+    public async Task<UserCreateResponse?> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken = default)
     {
         var role = await _db.Roles.FirstOrDefaultAsync(r => r.Name == request.Role, cancellationToken);
         if (role == null) return null;
         if (await _db.Users.AnyAsync(u => u.Username == request.Username, cancellationToken)) return null;
+        var emailNorm = EmailNormalizer.Normalize(request.Email);
+        if (await _db.Users.AnyAsync(u => u.Email == emailNorm, cancellationToken)) return null;
+
+        var plainTemp = string.IsNullOrWhiteSpace(request.TempPassword)
+            ? PasswordGenerator.GenerateTemporaryPassword()
+            : request.TempPassword!;
 
         var user = new User
         {
             FullName = request.FullName,
             Username = request.Username,
-            Email = request.Email,
-            PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.TempPassword),
+            Email = emailNorm,
+            PasswordHash = BCrypt.Net.BCrypt.HashPassword(plainTemp),
             TempPass = true,
             IsActive = true,
             RoleId = role.Id
         };
         _db.Users.Add(user);
         await _db.SaveChangesAsync(cancellationToken);
-        return new UserResponse
+        return new UserCreateResponse
         {
             Id = user.Id,
             FullName = user.FullName,
             Username = user.Username,
             Email = user.Email,
-            Role = request.Role,
-            IsActive = user.IsActive
+            Role = role.Name,
+            IsActive = user.IsActive,
+            GeneratedTempPassword = plainTemp
         };
     }
 
@@ -66,8 +74,10 @@ public class UserService
         if (user == null) return null;
         var role = await _db.Roles.FirstOrDefaultAsync(r => r.Name == request.Role, cancellationToken);
         if (role == null) return null;
+        var emailNorm = EmailNormalizer.Normalize(request.Email);
+        if (await _db.Users.AnyAsync(u => u.Email == emailNorm && u.Id != id, cancellationToken)) return null;
         user.FullName = request.FullName;
-        user.Email = request.Email;
+        user.Email = emailNorm;
         user.RoleId = role.Id;
         await _db.SaveChangesAsync(cancellationToken);
         return new UserResponse
@@ -90,13 +100,16 @@ public class UserService
         return true;
     }
 
-    public async Task<bool> ResetPasswordAsync(int id, string tempPassword, CancellationToken cancellationToken = default)
+    public async Task<ResetPasswordResponse?> ResetPasswordAsync(int id, string? tempPassword, CancellationToken cancellationToken = default)
     {
         var user = await _db.Users.FindAsync(new object[] { id }, cancellationToken);
-        if (user == null) return false;
-        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(tempPassword);
+        if (user == null) return null;
+        var plain = string.IsNullOrWhiteSpace(tempPassword)
+            ? PasswordGenerator.GenerateTemporaryPassword()
+            : tempPassword;
+        user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(plain);
         user.TempPass = true;
         await _db.SaveChangesAsync(cancellationToken);
-        return true;
+        return new ResetPasswordResponse { GeneratedTempPassword = plain };
     }
 }

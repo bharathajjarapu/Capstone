@@ -7,7 +7,7 @@ import { dashboardPathForRole } from "../utils/rolePaths.js";
 export default function LoginPage() {
   const navigate = useNavigate();
   const { token, tempPass, role, setAuth, markPasswordChanged, hydrated } = useAuth();
-  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmNew, setConfirmNew] = useState("");
@@ -26,13 +26,13 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const data = await login(username, password);
+      const data = await login(email, password);
       setAuth(data);
       if (!data.tempPass) {
         navigate(dashboardPathForRole(data.role), { replace: true });
       }
     } catch {
-      setError("Invalid username or password.");
+      setError("Invalid email or password.");
     } finally {
       setLoading(false);
     }
@@ -72,12 +72,13 @@ export default function LoginPage() {
         {!showStep2 && (
           <form className="mt-6 space-y-4" onSubmit={handleLogin}>
             <div>
-              <label className="block text-sm font-medium text-neutral-800">Username</label>
+              <label className="block text-sm font-medium text-neutral-800">Email</label>
               <input
+                type="email"
                 className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
                 required
               />
             </div>

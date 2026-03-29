@@ -1,7 +1,7 @@
 import http from "./http.js";
 
-export async function login(username, password) {
-  const { data } = await http.post("/api/auth/login", { username, password });
+export async function login(email, password) {
+  const { data } = await http.post("/api/auth/login", { email, password });
   return data;
 }
 

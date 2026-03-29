@@ -19,6 +19,14 @@ export async function deactivateUser(id) {
   await http.patch(`/api/users/${id}/deactivate`);
 }
 
+/** Soft-delete user (sets inactive). */
+export async function deleteUser(id) {
+  await http.delete(`/api/users/${id}`);
+}
+
+/** Server generates temp password when omitted. */
 export async function resetPassword(id, tempPassword) {
-  await http.patch(`/api/users/${id}/reset-password`, { tempPassword });
+  const body = tempPassword ? { tempPassword } : {};
+  const { data } = await http.patch(`/api/users/${id}/reset-password`, body);
+  return data;
 }

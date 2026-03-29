@@ -1,0 +1,17 @@
+{
+  "name": "vendot-testing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "reset": "bun run reset.ts",
+    "seed": "bun run seed.ts",
+    "check": "bun run check.ts",
+    "setup": "bun run reset.ts && bun run seed.ts",
+    "build:backend": "dotnet build ../Backend/VenDot.csproj -c Release",
+    "test:api": "bun run check.ts",
+    "test:backend": "bun run build:backend"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3"
+  }
+}
