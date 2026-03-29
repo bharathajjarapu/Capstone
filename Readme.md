@@ -4,7 +4,45 @@
 
 **Stack:** React + Vite + TailwindCSS · .NET 8 Web API · Entity Framework Core · MSSQL 
 
-**Server** Server=localhost\SQLEXPRESS;Database=master;Trusted_Connection=True;
+**Connection string (application database — not `master`):**  
+`Server=localhost\SQLEXPRESS;Database=VenDot;Trusted_Connection=True;TrustServerCertificate=True;`
+
+`TrustServerCertificate=True` avoids ODBC Driver 18 TLS/certificate issues on local SQL Express. For production, use proper certificates and stricter settings.
+
+---
+
+## 0. Create the VenDot database
+
+Create the database **once** on your machine before running EF Core migrations. The logical name is **VenDot** (capital V and D).
+
+### Option A — SQL Server Management Studio (SSMS)
+
+1. Connect to `localhost\SQLEXPRESS` (Windows Authentication is typical).
+2. New Query, run:
+
+```sql
+IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = N'VenDot')
+    CREATE DATABASE VenDot;
+```
+
+3. Confirm **VenDot** appears under Databases.
+
+### Option B — `sqlcmd` (command line)
+
+From PowerShell or Command Prompt (adjust server if yours differs):
+
+```bash
+sqlcmd -S "localhost\SQLEXPRESS" -E -C -Q "IF NOT EXISTS (SELECT name FROM sys.databases WHERE name = N'VenDot') CREATE DATABASE VenDot;"
+```
+
+- `-E` = Windows integrated security.  
+- `-C` = trust server certificate (same idea as `TrustServerCertificate=True` in the app connection string).
+
+If `sqlcmd` reports the database already exists, no action is needed.
+
+### After the database exists
+
+Point `Backend/appsettings.json` (and `appsettings.Development.json`) `ConnectionStrings:DefaultConnection` at **VenDot**, then run EF migrations from the Backend project so tables are created inside **VenDot**.
 
 ---
 
@@ -15,7 +53,7 @@
 **Core Flow:**
 Admin registers vendors → Accountant raises payment requests with line items and tax → Manager approves or rejects → Analyst generates filtered reports
 
-**Five Roles:** Admin · Accountant · Manager · Analyst · (All users share login and password change)
+**Four roles:** Admin · Accountant · Manager · Analyst. All users share the same login and password-change flows (`TempPass` when an admin sets a temporary password).
 
 ---
 
@@ -48,7 +86,7 @@ ven./
 │   │   ├── ChangePwdRequest.cs
 │   │   ├── CreateUserRequest.cs
 │   │   ├── CreateVendorRequest.cs
-│   │   ├── CreatePaymentRequest.cs
+│   │   ├── CreatePaymentRequest.cs   -- includes vendorId, vendorBankAccountId, line items, tax fields
 │   │   └── GenerateReportRequest.cs
 │   ├── Services/
 │   │   ├── AuthService.cs
@@ -56,11 +94,14 @@ ven./
 │   │   ├── VendorService.cs
 │   │   ├── PaymentService.cs
 │   │   └── ReportService.cs
-    │   ├── Data/
-    │   │   ├── AppDBContext.cs
-    │   │   └── Seeder.cs            -- Optional Dev/Demo Bootstrap only; Not Required in Production (See §5.2)
+│   ├── Data/
+│   │   ├── AppDbContext.cs
+│   │   └── Seeder.cs            -- Optional Dev/Demo Bootstrap only; Not Required in Production (See §5.2)
 │   ├── Middleware/
-│   │   └── ErrorHandler.cs
+│   │   ├── ErrorHandler.cs
+│   │   └── TempPassMiddleware.cs   -- Blocks API except auth/password routes when user must change password
+│   ├── HostedWorkers/
+│   │   └── ReportBackgroundWorker.cs   -- IHostedService: runs report jobs with IServiceScopeFactory (see §5.9 / §8)
 │   └── Program.cs
 │
 └── frontend/
@@ -78,6 +119,7 @@ ven./
     │   │   ├── DataTable.jsx
     │   │   ├── Modal.jsx
     │   │   ├── VendorPicker.jsx
+    │   │   ├── BankAccountPicker.jsx
     │   │   ├── LineItemsTable.jsx
     │   │   └── TaxPicker.jsx
     │   ├── pages/
@@ -136,19 +178,19 @@ Users
   FullName       NVARCHAR(150)
   Username       NVARCHAR(100) UNIQUE
   Email          NVARCHAR(200)
-  Password       NVARCHAR(500)    -- plain text for now; BCrypt hashing added in Future Enhancements
-  TempPass       BIT              -- true = admin set a temp password; user must change password in auth before the rest of the app
+  PasswordHash   NVARCHAR(500)    -- BCrypt hash (BCrypt.Net-Next); never store plain text
+  TempPass       BIT              -- true = admin set a temp password; user must change password before using the rest of the app
   IsActive       BIT
   RoleId         INT FK → Roles
 ```
 
 > **Key Change from Spec:** `IsFirstLogin` is renamed to `TempPass`. The logic is simpler:
-> - Admin creates a user and sets a temp password → `TempPass = true`
-> - On login, if `TempPass = true`, the JWT response includes `"tempPass": true`
+> - Admin creates a user and sets a temp password → stored as **BCrypt hash**, `TempPass = true`
+> - On login, if `TempPass = true`, the JWT response includes `"tempPass": true` and the JWT includes a **`must_change_password`** claim (or equivalent) so the **API** can enforce the rule (see §5.4)
 > - The frontend keeps the user on `LoginPage` and swaps to the "set new password" step (same `/login` URL) — no separate route
 > - No separate "first login detection" flow; any login with `TempPass = true` forces that step before the app unlocks
-> - Once the user saves a new password, `TempPass = false` and they land on their dashboard
-> - Admin can also reset a user's password at any time, which sets `TempPass = true` again
+> - Once the user saves a new password, `TempPass = false`, password is re-hashed, and they land on their dashboard
+> - Admin can also reset a user's password at any time, which sets `TempPass = true` again (new temp password is hashed)
 
 ### 4.3 Vendors
 ```
@@ -191,23 +233,32 @@ Seed: 1=None(0%)  2=GST(10%)  3=VAT(15%)  4=WHT(5%)
 ### 4.6 PaymentRequests
 ```
 PaymentRequests
-  Id             INT PK auto
-  VendorId       INT FK → Vendors
-  InvoiceNo      NVARCHAR(100)
-  SubTotal       DECIMAL(18,2)
-  TaxTypeId      INT FK → TaxTypes   -- null if custom rate entered
-  TaxRate        DECIMAL(5,4)        -- always stored regardless of source
-  TaxAmount      DECIMAL(18,2)
-  TotalAmount    DECIMAL(18,2)
-  DueDate        DATE
-  Status         NVARCHAR(20)        -- PENDING | APPROVED | REJECTED
-  Notes          NVARCHAR(500)       -- accountant notes, optional
-  SubmittedById  INT FK → Users
-  ReviewedById   INT FK → Users      -- null until reviewed
-  ReviewNote     NVARCHAR(500)       -- manager note, optional
-  SubmittedAt    DATETIME2
-  ReviewedAt     DATETIME2           -- null until reviewed
+  Id                  INT PK auto
+  VendorId            INT FK → Vendors
+  VendorBankAccountId INT FK → VendorBankAccounts   -- which account was used for this request
+  InvoiceNo           NVARCHAR(100)
+  -- Snapshot at submit time (historical truth if vendor edits accounts later)
+  SnapshotBankName    NVARCHAR(200)
+  SnapshotAccountName NVARCHAR(200)
+  SnapshotAccountNo   NVARCHAR(50)
+  SnapshotRoutingNo   NVARCHAR(50)
+  SnapshotSwiftCode   NVARCHAR(20)   -- nullable
+  SubTotal            DECIMAL(18,2)
+  TaxTypeId           INT FK → TaxTypes   -- null if custom rate entered
+  TaxRate             DECIMAL(5,4)        -- always stored regardless of source
+  TaxAmount           DECIMAL(18,2)
+  TotalAmount         DECIMAL(18,2)
+  DueDate             DATE
+  Status              NVARCHAR(20)        -- PENDING | APPROVED | REJECTED
+  Notes               NVARCHAR(500)       -- accountant notes, optional
+  SubmittedById       INT FK → Users
+  ReviewedById        INT FK → Users      -- null until reviewed
+  ReviewNote          NVARCHAR(500)       -- manager note, optional
+  SubmittedAt         DATETIME2
+  ReviewedAt          DATETIME2           -- null until reviewed
 ```
+
+Optional uniqueness (recommended if your business rules require it): unique index on `(VendorId, InvoiceNo)` for active/historical rows as you prefer.
 
 ### 4.7 PaymentItems
 ```
@@ -226,12 +277,13 @@ Reports
   Id             INT PK auto
   ReportType     NVARCHAR(50)     -- Summary | ByVendor | ByStatus | ByAccountant | ByMonth
   FilterJson     NVARCHAR(MAX)    -- JSON of all applied filters (audit trail)
+  ReportResultJson NVARCHAR(MAX)  -- JSON output produced when Status becomes READY (download returns this; stable audit)
   GeneratedById  INT FK → Users
   Status         NVARCHAR(20)     -- PROCESSING | READY | FAILED
   RequestedAt    DATETIME2
   CompletedAt    DATETIME2        -- null until ready
 
-  -- FilePath column will be added when PDF export is implemented (see Future Enhancements)
+  -- FilePath: add when PDF export is implemented (see §12)
 ```
 
 ---
@@ -248,10 +300,19 @@ Packages to install:
 - `Microsoft.EntityFrameworkCore.SqlServer`
 - `Microsoft.EntityFrameworkCore.Tools`
 - `Microsoft.AspNetCore.Authentication.JwtBearer`
+- `BCrypt.Net-Next` — password hashing (required for this capstone; see §4.2)
 
-> **Not included yet:** `BCrypt.Net-Next` and `QuestPDF` — added in Future Enhancements.
+> **Later (PDF only):** `QuestPDF` — see §12.
 
 ### 5.2 Data Layer
+
+**Connection string:** Use the **VenDot** database (see **§0**). Example in `appsettings.Development.json`:
+
+```json
+"ConnectionStrings": {
+  "DefaultConnection": "Server=localhost\\SQLEXPRESS;Database=VenDot;Trusted_Connection=True;TrustServerCertificate=True;"
+}
+```
 
 **`Data/AppDbContext.cs`** — EF Core DbContext
 ```csharp
@@ -274,11 +335,12 @@ All protected endpoints require a valid JWT Bearer token in the `Authorization` 
 Authorization: Bearer <token>
 ```
 
-**JWT configuration in `appsettings.json`:**
+**JWT configuration:** Keep **`Jwt:Secret`** out of source control when possible. For local development use [.NET User Secrets](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets) (`dotnet user-secrets set "Jwt:Secret" "<long-random-string>"`). `appsettings.json` may omit the secret or use a placeholder; production should use environment variables or a vault.
+
+Example shape (secret supplied via user secrets / environment):
 ```json
 {
   "Jwt": {
-    "Secret": "your-secret-key-minimum-32-characters",
     "Issuer": "vendot",
     "Audience": "vendot",
     "ExpireHours": 8
@@ -290,6 +352,9 @@ Authorization: Bearer <token>
 - `userId` — the user's integer ID from the database
 - `role` — the user's role name (Admin / Accountant / Manager / Analyst)
 - `name` — the user's full name (for display in the navbar)
+- `must_change_password` — `"true"` or `"false"` string (or use a boolean claim type); **must be `true` when `TempPass` is true** so middleware can block other endpoints until `POST /api/auth/change-password` succeeds
+
+**HTTPS:** Use HTTPS in production; passwords and tokens must not go over plain HTTP in real deployments.
 
 **`Program.cs`** JWT setup:
 ```csharp
@@ -310,27 +375,40 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 Every controller is decorated with `[Authorize]`. Role-specific endpoints use `[Authorize(Roles = "Admin")]` etc. The backend always validates the JWT role claim server-side — frontend role checks only control which pages are visible, never actual security.
 
+### 5.3.1 TempPass enforcement (server-side)
+
+**Problem solved:** A user with `TempPass = true` must not call vendor/payment/report APIs with a valid JWT until they change their password.
+
+**Approach:** After login, include **`must_change_password`** in the JWT when `TempPass` is true. Add **`TempPassMiddleware`** (after `UseAuthentication`, before endpoints) that:
+
+- Allows anonymous access to `POST /api/auth/login`
+- Allows authenticated access only to `POST /api/auth/change-password` (and optionally logout) while `must_change_password` is true
+- Returns **403** for all other routes until the user completes change-password (which clears `TempPass` and issues a new JWT without the restriction, or sets claim to false)
+
+Frontend route guards remain; this middleware is the real security boundary.
+
 ### 5.4 Auth — `TempPass` Flow
 
 **`Controllers/AuthController.cs`**
 
 `POST /api/auth/login`
 - Find user by username
-- Compare plain text password directly (BCrypt comparison added in future)
+- Verify password with **`BCrypt.Verify`** against `PasswordHash`
 - Check `IsActive`
-- Build and sign JWT with claims: `userId`, `role`, `name`
+- Build and sign JWT with claims: `userId`, `role`, `name`, **`must_change_password`** (matches `TempPass`)
 - **If `TempPass = true`: include `"tempPass": true` in the response body alongside the token**
 - Frontend keeps the user on `LoginPage` and shows the new-password step (still `/login`)
 
 `POST /api/auth/change-password`
-- Requires valid JWT in Authorization header
+- Requires valid JWT in Authorization header (still subject to middleware: only this route allowed while `must_change_password` is true)
 - Accepts: `{ newPassword }`
-- Save plain text password (hashing added in future), set `TempPass = false`
+- Save **`BCrypt.HashPassword`** to `PasswordHash`, set `TempPass = false`
+- Return new token **or** require re-login — pick one approach consistently; if returning a new JWT, include `must_change_password: false`
 - Returns 200 OK
 
 **`Services/AuthService.cs`**
 - `Login(username, password)` → returns `{ token, tempPass, role, name }`
-- `ChangePassword(userId, newPassword)` → updates password field, sets `TempPass = false`
+- `ChangePassword(userId, newPassword)` → updates `PasswordHash`, sets `TempPass = false`
 
 **JWT Login Response Shape:**
 ```json
@@ -353,11 +431,11 @@ Every controller is decorated with `[Authorize]`. Role-specific endpoints use `[
 | PATCH | `/api/users/{id}/reset-password` | Admin sets a new temp password → `TempPass = true` |
 
 **`Services/UserService.cs`**
-- `GetAll()` — returns list of all users with role names
-- `Create(createUserRequest)` — saves user with plain text temp password, sets `TempPass = true`
+- `GetAll()` — returns list of all users with role names (never return `PasswordHash` to clients)
+- `Create(createUserRequest)` — **`BCrypt.HashPassword`** on temp password, sets `TempPass = true`
 - `Update(id, updateRequest)` — updates name, email, role
 - `Deactivate(id)` — sets `IsActive = false`
-- `ResetPassword(id, tempPassword)` — saves new plain text temp password, sets `TempPass = true`
+- `ResetPassword(id, tempPassword)` — **`BCrypt.HashPassword`** on new temp password, sets `TempPass = true`
 
 ### 5.6 Vendors — `Controllers/VendorController.cs`
 
@@ -400,8 +478,8 @@ Every controller is decorated with `[Authorize]`. Role-specific endpoints use `[
 
 **`Services/PaymentService.cs`**
 - `GetAll(userId, role)` — Accountant sees only their own; Manager sees all PENDING
-- `Create(createPaymentRequest, submittedById)` — saves request + all line items; all calculations done here server-side
-- `GetById(id)` — returns full detail including vendor info, bank account, and all line items
+- `Create(createPaymentRequest, submittedById)` — requires **`vendorBankAccountId`** (must belong to the selected vendor); copies **snapshot** columns from that `VendorBankAccount` row; saves request + line items; validate at least one line item, positive quantity and unit price; all money math server-side
+- `GetById(id)` — returns full detail using **snapshot** fields for bank display; include live vendor name from `Vendors` as needed
 - `Approve(id, reviewedById, note)` — sets `Status = APPROVED`, saves `ReviewedAt = now`, stores note
 - `Reject(id, reviewedById, note)` — sets `Status = REJECTED`, saves `ReviewedAt = now`, stores note
 
@@ -423,11 +501,13 @@ TotalAmount  = SubTotal + TaxAmount
 | GET | `/api/reports/{id}/download` | Analyst, Admin | Download report data (JSON now; PDF in future) |
 
 **`Services/ReportService.cs`**
-- `Queue(generateReportRequest, generatedById)` — saves a Reports row (`Status = PROCESSING`), fires `Task.Run(ProcessReport)`, returns the new report ID immediately
-- `ProcessReport(reportId)` — queries PaymentRequests with the applied filters, groups and aggregates data by report type, marks `Status = READY` and sets `CompletedAt = now`; marks `Status = FAILED` on any exception
+- `Queue(generateReportRequest, generatedById)` — saves a Reports row (`Status = PROCESSING`), enqueues work for the background worker (see below), returns the new report ID immediately
+- `ProcessReport(reportId)` — runs inside a **scoped** service (via `IServiceScopeFactory`): queries `PaymentRequests` with filters, aggregates by report type, writes **`ReportResultJson`**, sets `Status = READY` and `CompletedAt`; on exception sets `FAILED`
 - `GetAll(userId, role)` — Analyst sees own; Admin sees all
 - `GetById(id)` — returns report status and metadata
-- `Download(id)` — returns aggregated report data as JSON; PDF file generation added in future
+- `Download(id)` — returns **`ReportResultJson`** (the stored JSON from generation time), not a fresh recompute — stable audit trail
+
+**Background execution (replace raw `Task.Run`):** Register an **`IHostedService`** (e.g. `HostedWorkers/ReportBackgroundWorker.cs`) that uses a channel or queue of report IDs and, for each job, creates a scope (`scope.ServiceProvider.GetRequiredService<ReportService>()`) and calls `ProcessReport`. This avoids disposing `DbContext` incorrectly and survives the pattern better than fire-and-forget `Task.Run` on the request thread.
 
 **Report Types:**
 - `Summary` — total count and total value of all matching requests
@@ -453,6 +533,8 @@ All applied filter values are saved as JSON in `Reports.FilterJson` for audit pu
 
 ### 5.10 Middleware
 
+**`Middleware/TempPassMiddleware.cs`** — see §5.3.1. Blocks API usage until password change when the JWT indicates `must_change_password`.
+
 **`Middleware/ErrorHandler.cs`** — global exception middleware. Catches all unhandled exceptions and returns:
 ```json
 { "error": "Something went wrong." }
@@ -460,13 +542,15 @@ All applied filter values are saved as JSON in `Reports.FilterJson` for audit pu
 Returns 400 for validation errors, 401 for auth failures, 403 for wrong role, 404 for not found, 500 for unhandled exceptions.
 
 **`Program.cs`** registers:
-- `AppDbContext` with SQL Server connection string from `appsettings.json`
+- `AppDbContext` with SQL Server connection string pointing at **VenDot** (see §0, §5.2)
 - JWT Bearer authentication (as shown in section 5.3)
 - All service classes registered with `AddScoped`
+- Report background worker (`IHostedService`) if using the queued report pattern (§5.9)
 - CORS policy allowing `http://localhost:5173` in development
+- `TempPassMiddleware` after authentication so claims are available
 - `ErrorHandler` middleware
 - `UseAuthentication()` and `UseAuthorization()` in the correct order
-- **Optional:** `Seeder` invocation only in dev/demo — never required for production (see §5.2)
+- **Optional:** `Seeder` invocation only in dev/demo — never required for production (see §5.2); demo admin password must be **hashed** in seeder code
 
 ---
 
@@ -476,10 +560,10 @@ Returns 400 for validation errors, 401 for auth failures, 403 for wrong role, 40
 ```bash
 bunx create-vite . --template react
 bun add axios react-router-dom
-bunx tailwindcss init -p
 ```
 
-`tailwind.config.js`:
+Tailwind: either follow the official Tailwind **v4** + Vite setup (`@tailwindcss/vite` in `vite.config.js`, `@import "tailwindcss"` in CSS) as in this repo, **or** use the classic `bunx tailwindcss init -p` flow with a `tailwind.config.js`:
+
 ```js
 content: ['./index.html', './src/**/*.{js,jsx}']
 ```
@@ -583,6 +667,9 @@ Centered overlay with a backdrop, a title prop, a children slot for the form con
 **`components/VendorPicker.jsx`**
 Searchable dropdown component. Calls `GET /api/vendors` on mount and loads the vendor list. Filters the displayed options as the user types. Accepts `value` and `onChange` props. Passes the selected `vendorId` back via `onChange`.
 
+**`components/BankAccountPicker.jsx` (or inline on payment form)**  
+After a vendor is selected, load `GET /api/vendors/{id}/accounts` and let the accountant pick **one** bank account. Submit `vendorBankAccountId` with the payment create request.
+
 **`components/LineItemsTable.jsx`**
 Table component for managing payment line items. Each row has: Description (text input), Quantity (number input), Unit Price (number input), Line Total (read-only, auto-calculated as Quantity × Unit Price). "Add Row" button at the bottom, a remove (×) button on each row. Subtotal is shown below the table, summed from all Line Totals. Passes the current array of item objects back via `onChange`.
 
@@ -608,6 +695,7 @@ Shows the vendor name at the top for context. DataTable showing Bank Name, Accou
 #### `PaymentFormPage.jsx` (Accountant)
 Full payment creation form:
 - `VendorPicker` to select the vendor
+- Bank account selector for that vendor (`vendorBankAccountId` sent to API)
 - Invoice No text input
 - Due Date picker
 - `LineItemsTable` for all line items (add/remove rows, auto Line Total, auto Subtotal)
@@ -650,22 +738,23 @@ Admin creates a new user:
   → no extra setup step needed
 
 User logs in with the temp password:
-  → backend validates password, returns { token, role, name, tempPass: true }
+  → backend validates password (**BCrypt**), returns { token, role, name, tempPass: true }; JWT includes **must_change_password** for middleware
   → frontend stores all of this via `setAuth` (Auth Context + `localStorage`)
   → LoginPage stays mounted on /login and shows the new-password step
   → route guard detects tempPass = true
+  → **TempPassMiddleware** returns 403 for any API other than change-password until the password is updated
   → any navigation away redirects back to /login (password step)
   → user cannot use the rest of the app until they complete this step
 
 User sets their new password on LoginPage (step 2):
   → POST /api/auth/change-password with { newPassword }
-  → backend saves the new password, sets TempPass = false
+  → backend saves new **hash**, sets TempPass = false
   → frontend calls `markPasswordChanged()` (Context + `localStorage`)
   → navigates to their role's dashboard
 
 Admin resets a user's password at any time later:
   → PATCH /api/users/{id}/reset-password with { tempPassword }
-  → backend saves the new temp password, sets TempPass = true
+  → backend hashes and saves the new temp password, sets TempPass = true
   → the next time that user logs in, the same flow forces them to change it again
 ```
 
@@ -674,6 +763,7 @@ Admin resets a user's password at any time later:
 - No separate "first login detection" logic needed anywhere in the codebase
 - `TempPass` marks that the user is still on a temp password and must complete password change on `LoginPage` (step 2) before using the app
 - Admin can force any user to pick a new password at any time simply by resetting it
+- **Server-side middleware** ensures the rule cannot be bypassed with a REST client
 
 ---
 
@@ -684,13 +774,13 @@ Analyst clicks Generate:
   → POST /api/reports/generate with { reportType, filters }
   → ReportService.Queue() saves a Reports row (Status = PROCESSING)
   → Returns the new report ID to the frontend immediately (fast — no waiting for data)
-  → Task.Run(() => ProcessReport(reportId)) fires on a background thread
+  → **IHostedService** / queue picks up the report ID and runs `ProcessReport` inside a **new DI scope** (`IServiceScopeFactory`)
 
-Background thread (ProcessReport):
+Background worker (ProcessReport):
   → Reads the report's filter JSON from the database
   → Queries PaymentRequests applying all filters via dynamic LINQ
   → Groups and aggregates the results by the selected report type
-  → Marks Status = READY, sets CompletedAt = DateTime.UtcNow
+  → Writes **ReportResultJson**, marks Status = READY, sets CompletedAt = DateTime.UtcNow
   → On any exception: marks Status = FAILED
 
 Frontend polling (ReportListPage.jsx):
@@ -701,8 +791,8 @@ Frontend polling (ReportListPage.jsx):
 
 Download:
   → GET /api/reports/{id}/download
-  → Backend returns the aggregated report data as JSON (PDF file added in future)
-  → Frontend displays or saves the data
+  → Backend returns **ReportResultJson** (same payload generated at READY time)
+  → Frontend displays or saves the data (PDF file added in future — §12)
 ```
 
 ---
@@ -715,9 +805,9 @@ Download:
 
 | Day | Task |
 |-----|------|
-| 1 | Create .NET 8 Web API project in `backend/`, configure EF Core, write `AppDbContext.cs`, set up connection string in `appsettings.json` |
-| 1 | Write `Role.cs` and `User.cs` models. Run first migration. Ensure roles (and baseline reference data) via migrations/`HasData`. Add optional `Seeder.cs` for dev: demo Admin user (`TempPass = false`) — gated in `Program.cs`, removable for prod |
-| 1 | Build `AuthController.cs` + `AuthService.cs`: login validates plain text password, builds and returns JWT + `tempPass` flag; change-password endpoint saves new password and clears the flag |
+| 1 | Create .NET 8 Web API project in `backend/`, configure EF Core, write `AppDbContext.cs`, set up connection string to **VenDot** (§0) in `appsettings.json` |
+| 1 | Write `Role.cs` and `User.cs` models (`PasswordHash`, BCrypt). Run first migration. Ensure roles (and baseline reference data) via migrations/`HasData`. Add optional `Seeder.cs` for dev: demo Admin user (`TempPass = false`, hashed password) — gated in `Program.cs`, removable for prod |
+| 1 | Build `AuthController.cs` + `AuthService.cs`: login with **BCrypt.Verify**, JWT includes `must_change_password`; change-password hashes new password and clears `TempPass`; add **TempPassMiddleware** |
 | 1 | Scaffold Vite + React project in `frontend/`, install packages (axios, react-router-dom), configure TailwindCSS |
 | 1 | Set up `main.jsx` with `AuthProvider`, write `AuthContext.jsx` (`useAuth`, `localStorage` sync), write `api/http.js` with JWT interceptor (`getAuthToken` or registered clear handler) |
 | 2 | Build `LoginPage.jsx` wired to real auth API via `useAuth()`; when `tempPass`, show new-password step on same page, call change-password API, `markPasswordChanged()`, then redirect to role dashboard |
@@ -735,8 +825,8 @@ Download:
 | 3 | Build `VendorListPage.jsx` and vendor Add/Edit modal — wired to the vendor API |
 | 3 | Build `PaymentController.cs` + `PaymentService.cs`: POST create accepts vendor + all line items + tax in one request body; all calculations done server-side |
 | 3 | Build GET `/api/payments` (role-filtered) and GET `/api/payments/{id}` with full detail including items |
-| 3 | Build `ReportController.cs` + `ReportService.cs`: Queue method saves PROCESSING row, fires Task.Run, returns the report ID |
-| 3 | Implement `ProcessReport` for the Summary report type — query, aggregate, mark READY |
+| 3 | Build `ReportController.cs` + `ReportService.cs`: Queue saves PROCESSING row, enqueues to **IHostedService** worker, returns the report ID |
+| 3 | Implement `ProcessReport` for the Summary report type — query, aggregate, write **ReportResultJson**, mark READY |
 | 3 | Build `VendorPicker.jsx` — searchable dropdown loading from GET /api/vendors |
 | 3 | Build `LineItemsTable.jsx` — add/remove rows, auto Line Total per row, auto Subtotal |
 | 3 | Build `TaxPicker.jsx` — preset dropdown + custom rate input, auto Tax Amount |
@@ -744,7 +834,7 @@ Download:
 | 4 | Build `BankAccountPage.jsx` — navigated to from the vendor list |
 | 4 | Build POST `/api/payments/{id}/approve` and `/api/payments/{id}/reject` with note and timestamp |
 | 4 | Implement remaining report types in ProcessReport: ByVendor, ByStatus, ByAccountant, ByMonth |
-| 4 | Build GET `/api/reports/{id}` for status polling; GET `/api/reports/{id}/download` returning JSON |
+| 4 | Build GET `/api/reports/{id}` for status polling; GET `/api/reports/{id}/download` returns stored **ReportResultJson** |
 | 4 | Build `PaymentFormPage.jsx`: full form assembling all three components + Grand Total preview |
 | 4 | Build `PaymentListPage.jsx`: accountant request list with status badges, click to view detail |
 | 4 | Build `ManagerDashboard.jsx` + `PaymentDetailPage.jsx`: pending list + approve/reject buttons + review note |
@@ -833,7 +923,13 @@ Deactivated vendors are excluded from the `VendorPicker` dropdown (GET /api/vend
 When an accountant enters a custom rate, `TaxTypeId` is saved as null and `TaxRate` stores the entered decimal value. All queries, report aggregations, and detail views handle this null case.
 
 ### Report Data Format
-Reports currently return aggregated data as JSON. Each report object contains grouped and totalled rows based on the selected report type. PDF generation is a future enhancement (see section 12).
+Downloads return **`ReportResultJson`** saved when the report reached READY (not a live re-query). Each payload contains grouped and totalled rows for the selected report type. PDF generation is a future enhancement (see §12).
+
+### Payment create validation
+At least one line item; quantity and unit price **> 0**; `vendorBankAccountId` must belong to `vendorId`; totals recomputed server-side only.
+
+### Bank account default rule
+`VendorService.SetDefault` must run in a transaction: one default per vendor.
 
 ### Simple State Management
 **Auth Context** holds only: `token`, `role`, `name`, `tempPass` (synced to `localStorage` for refresh). All other application data (vendor lists, payment details, report results) is fetched fresh from the API per page load and kept in local component state. No extra global store library is needed.
@@ -846,29 +942,18 @@ Reports currently return aggregated data as JSON. Each report object contains gr
 
 ## 12. Future Enhancements
 
-These items are explicitly out of scope for the current build and are documented here so they can be plugged in cleanly without reworking existing code.
-
-### Password Hashing (BCrypt)
-Currently passwords are stored and compared as plain text. To add BCrypt hashing later:
-
-1. Install package: `dotnet add package BCrypt.Net-Next`
-2. In `AuthService.Login`: replace plain text comparison with `BCrypt.Verify(inputPassword, user.Password)`
-3. In `UserService.Create` and `UserService.ResetPassword`: replace plain text save with `BCrypt.HashPassword(tempPassword)`
-4. In `AuthService.ChangePassword`: replace plain text save with `BCrypt.HashPassword(newPassword)`
-5. Run a one-time data migration to hash all existing plain text passwords in the database
-
-No schema changes needed — the `Password` column is already `NVARCHAR(500)` which comfortably fits a BCrypt hash.
+These items are optional follow-ons after the capstone core is complete.
 
 ### PDF Export for Reports
-Currently the download endpoint returns JSON data. To add PDF generation later:
+Currently the download endpoint returns **JSON** from `ReportResultJson`. To add PDF generation later:
 
 1. Install package: `dotnet add package QuestPDF`
 2. Add `FilePath NVARCHAR(500)` column to the `Reports` table and run a migration
-3. In `ReportService.ProcessReport`: after aggregating the data, build a formatted PDF document using QuestPDF, save it to `wwwroot/reports/rpt_{id}.pdf`, and store the path in `Reports.FilePath`
-4. Update `ReportService.Download` to read `FilePath` and return a `FileStream` with the correct content-type header
-5. Update the frontend `reportApi.downloadReport` to trigger a browser file download instead of displaying JSON
+3. In `ReportService.ProcessReport`: after building aggregated data (and `ReportResultJson`), optionally build a PDF with QuestPDF, save to `wwwroot/reports/rpt_{id}.pdf`, store path in `Reports.FilePath`
+4. Update `ReportService.Download` to prefer `FilePath` when present, else return JSON
+5. Update the frontend `reportApi.downloadReport` to trigger a file download when content-type is PDF
 
-The background job structure (`Task.Run`, PROCESSING → READY flow, 3-second polling) is already fully in place — only the PDF generation step inside `ProcessReport` needs to be added.
+The **background worker** (PROCESSING → READY, `ReportResultJson`, 3-second polling) stays the same — add PDF as an extra output format.
 
 ---
 
@@ -878,8 +963,24 @@ Values below are for **local/demo** when `Seeder` runs (or manual insert). They 
 
 | Data | Values |
 |------|--------|
-| Admin user | Username: `admin` · Password: `Admin123` · TempPass: false |
+| Admin user | Username: `admin` · Password: `Admin123` in **plain text for demo only** — seeder must store **`BCrypt.HashPassword("Admin123")`** in `PasswordHash` · TempPass: false |
 | Roles | Admin, Accountant, Manager, Analyst |
 | Tax types | None 0%, GST 10%, VAT 15%, WHT 5% |
 | Demo vendors | 3 vendors each with 1 bank account marked as default |
 | Demo users | 1 Accountant, 1 Manager, 1 Analyst — all with temp passwords, TempPass: true |
+
+---
+
+## 14. Future Changes (Known Limitations)
+
+These are intentional gaps for the capstone scope; treat them as follow-on work if you need a production-grade system.
+
+| Area | Limitation |
+|------|------------|
+| **Authentication** | No refresh tokens — JWTs expire per `Jwt:ExpireHours`; clients must log in again when expired. |
+| **List APIs** | No pagination on list endpoints (users, vendors, payments, reports) — large datasets may be slow or heavy. |
+| **Report jobs** | Report queue is in-process (in-memory channel). Jobs are **not** durable across API restarts; a restart can lose queued work. |
+| **Secrets & production** | `Jwt:Secret` must be a strong value and supplied via user secrets, environment variables, or a vault — never ship a weak or committed secret to production. |
+| **Report exports** | Download returns **JSON** only unless you implement PDF (see §12). No Excel/CSV export in the core build. |
+
+Related: connection string and SQL instance setup are covered in **§0** and **§5.2**; JWT role claim configuration is described in **§5.3**.
