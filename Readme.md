@@ -116,15 +116,15 @@ Capstone/
 │   ├── Utils/
 │   │   ├── EmailNormalizer.cs
 │   │   ├── PasswordGenerator.cs
-│   │   └── ReportExportHelper.cs   -- QuestPDF (PDF) + ClosedXML (XLSX)
+│   │   └── ReportExportHelper.cs
 │   ├── Data/
-│   │   └── AppDBContext.cs         -- EF Core DbContext
+│   │   └── AppDBContext.cs         
 │   ├── Middleware/
 │   │   ├── ErrorHandlerMiddleware.cs
-│   │   └── TempPassMiddleware.cs   -- Blocks API Except Auth/Password Routes When User Must Change Password
+│   │   └── TempPassMiddleware.cs   
 │   ├── HostedWorkers/
-│   │   └── ReportBackgroundWorker.cs   -- IHostedService: Report Jobs via IServiceScopeFactory
-│   ├── Migrations/                 -- EF Core Migrations
+│   │   └── ReportBackgroundWorker.cs  
+│   ├── Migrations/                
 │   ├── Properties/
 │   │   └── launchSettings.json
 │   ├── Program.cs
@@ -134,7 +134,7 @@ Capstone/
 │   ├── reset.ts
 │   ├── seed.ts
 │   ├── check.ts
-│   ├── connection.ts               -- Resolves SQL Connection String
+│   ├── connection.ts
 │   └── package.json
 └── Frontend/
     ├── src/
@@ -155,7 +155,7 @@ Capstone/
     │   │   ├── LineItemsTable.jsx
     │   │   └── TaxPicker.jsx
     │   ├── pages/
-    │   │   ├── LoginPage.jsx          -- Email/Password Login + New-Password Step on Same Route
+    │   │   ├── LoginPage.jsx 
     │   │   ├── AdminDashboard.jsx
     │   │   ├── UserListPage.jsx
     │   │   ├── VendorListPage.jsx
@@ -169,7 +169,7 @@ Capstone/
     │   │   ├── AnalystDashboard.jsx
     │   │   └── ReportListPage.jsx
     │   ├── context/
-    │   │   └── AuthContext.jsx    -- AuthProvider + useAuth; session state + localStorage sync
+    │   │   └── AuthContext.jsx 
     │   └── main.jsx
     ├── vite.config.js
     └── tailwind.config.js
