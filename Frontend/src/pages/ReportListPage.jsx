@@ -55,6 +55,7 @@ export default function ReportListPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [reportType, setReportType] = useState("Summary");
+  const [reportName, setReportName] = useState("");
   const [error, setError] = useState("");
   const [vendors, setVendors] = useState([]);
   const [taxTypes, setTaxTypes] = useState([]);
@@ -151,7 +152,12 @@ export default function ReportListPage() {
     setError("");
     try {
       const filters = buildFilters(filterForm);
-      const { id } = await generateReport({ reportType, filters });
+      const name = reportName.trim();
+      const { id } = await generateReport({
+        reportType,
+        filters,
+        ...(name ? { name } : {}),
+      });
       const row = await getReportById(id);
       setRows((prev) => [row, ...prev]);
     } catch {
@@ -215,20 +221,15 @@ export default function ReportListPage() {
 
   const columns = useMemo(
     () => [
-      { key: "reportType", label: "Type" },
       {
-        key: "filterJson",
-        label: "Filters",
-        render: (r) => {
-          const raw = r.filterJson;
-          if (!raw || typeof raw !== "string") return "—";
-          const short = raw.length > 72 ? `${raw.slice(0, 72)}…` : raw;
-          return (
-            <span className="block max-w-xs truncate text-neutral-600" title={raw}>
-              {short}
-            </span>
-          );
-        },
+        key: "name",
+        label: "Report",
+        render: (r) => (
+          <div>
+            <div className="text-base font-semibold text-neutral-900">{r.name?.trim() ? r.name : "Untitled"}</div>
+            <div className="text-xs text-neutral-500">{r.reportType}</div>
+          </div>
+        ),
       },
       {
         key: "requestedAt",
@@ -436,6 +437,16 @@ export default function ReportListPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="min-w-[12rem]">
+              <label className="block text-sm font-medium">Report name</label>
+              <input
+                type="text"
+                placeholder="Report name"
+                className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
+                value={reportName}
+                onChange={(e) => setReportName(e.target.value)}
+              />
             </div>
             <button
               type="button"

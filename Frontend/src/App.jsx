@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout.jsx";
 import RequireAuth from "./components/RequireAuth.jsx";
 import { AuthProvider, useAuth } from "./context/AuthContext.jsx";
+import { ToastProvider } from "./context/ToastContext.jsx";
 import AccountantDashboard from "./pages/AccountantDashboard.jsx";
 import AdminDashboard from "./pages/AdminDashboard.jsx";
 import AnalystDashboard from "./pages/AnalystDashboard.jsx";
@@ -31,6 +32,7 @@ function HomeRedirect() {
 export default function App() {
   return (
     <AuthProvider>
+      <ToastProvider>
       <div className="min-h-dvh bg-neutral-50 text-neutral-900">
         <Routes>
           <Route path="/login" element={<LoginPage />} />
@@ -146,7 +148,7 @@ export default function App() {
               path="/analyst/reports"
               element={
                 <RequireAuth roles={["Analyst"]}>
-                  <ReportListPage />
+                  <Navigate to="/analyst/dashboard" replace />
                 </RequireAuth>
               }
             />
@@ -155,6 +157,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
+      </ToastProvider>
     </AuthProvider>
   );
 }

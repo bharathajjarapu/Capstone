@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using VenDot.DTOs;
@@ -67,14 +68,36 @@ public class ReportController : ControllerBase
         return fmt switch
         {
             "pdf" => File(
-                ReportExportHelper.ToPdfPaymentTable(report.ReportType, report.Id, rows),
+                ReportExportHelper.ToPdfPaymentTable(report.Name, report.ReportType, report.Id, rows),
                 "application/pdf",
-                $"report-{id}.pdf"),
+                BuildDownloadFileName(report.Name, report.Id, "pdf")),
             "xlsx" => File(
-                ReportExportHelper.ToXlsxPaymentTable(report.ReportType, report.Id, rows),
+                ReportExportHelper.ToXlsxPaymentTable(report.Name, report.ReportType, report.Id, rows),
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                $"report-{id}.xlsx"),
+                BuildDownloadFileName(report.Name, report.Id, "xlsx")),
             _ => BadRequest()
         };
+    }
+
+    private static string BuildDownloadFileName(string? reportName, int reportId, string ext)
+    {
+        var baseName = string.IsNullOrWhiteSpace(reportName)
+            ? $"report_{reportId}"
+            : $"{SanitizeFileNameSegment(reportName)}_{reportId}";
+        return $"{baseName}.{ext}";
+    }
+
+    private static string SanitizeFileNameSegment(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder();
+        foreach (var c in name.Trim())
+        {
+            if (invalid.Contains(c) || c < 32) sb.Append('_');
+            else if (char.IsWhiteSpace(c)) sb.Append('_');
+            else sb.Append(c);
+        }
+        var s = sb.ToString().Trim('_');
+        return string.IsNullOrEmpty(s) ? "report" : s;
     }
 }

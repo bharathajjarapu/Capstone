@@ -20,28 +20,43 @@ export async function getReportById(id) {
   return data;
 }
 
-/** PDF or XLSX blob. */
+/** PDF or XLSX blob and server-suggested filename (from Content-Disposition). */
 export async function downloadReport(id, format = "pdf") {
   const fmt = (format || "pdf").toLowerCase();
-  const { data } = await http.get(`/api/reports/${id}/download`, {
+  const ext = fmt === "pdf" ? "pdf" : "xlsx";
+  const res = await http.get(`/api/reports/${id}/download`, {
     params: { format: fmt },
     responseType: "blob",
   });
-  return data;
+  const cd = res.headers["content-disposition"];
+  let filename = `report-${id}.${ext}`;
+  if (typeof cd === "string") {
+    const star = /filename\*=UTF-8''([^;\n]+)/i.exec(cd);
+    const quoted = /filename="([^"]+)"/i.exec(cd);
+    const plain = /filename=([^;\s]+)/i.exec(cd);
+    const raw = star?.[1] ?? quoted?.[1] ?? plain?.[1];
+    if (raw) {
+      try {
+        filename = decodeURIComponent(raw.replace(/^["']|["']$/g, ""));
+      } catch {
+        filename = raw.replace(/^["']|["']$/g, "");
+      }
+    }
+  }
+  return { blob: res.data, filename };
 }
 
 export function triggerReportDownload(id, format = "pdf") {
-  return downloadReport(id, format).then((data) => {
+  return downloadReport(id, format).then(({ blob, filename }) => {
     const fmt = (format || "pdf").toLowerCase();
-    const ext = fmt === "pdf" ? "pdf" : "xlsx";
     const mime =
       fmt === "pdf"
         ? "application/pdf"
         : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    const blob = data instanceof Blob ? data : new Blob([data], { type: mime });
+    const blobObj = blob instanceof Blob ? blob : new Blob([blob], { type: mime });
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `report-${id}.${ext}`;
+    a.href = URL.createObjectURL(blobObj);
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
   });

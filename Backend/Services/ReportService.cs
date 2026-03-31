@@ -22,6 +22,7 @@ public class ReportService
         var filterJson = JsonSerializer.Serialize(request.Filters ?? new ReportFilters());
         var report = new Report
         {
+            Name = request.Name,
             ReportType = request.ReportType,
             FilterJson = filterJson,
             GeneratedById = generatedById,

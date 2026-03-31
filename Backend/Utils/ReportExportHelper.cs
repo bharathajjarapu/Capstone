@@ -19,8 +19,11 @@ public static class ReportExportHelper
         "ID", "Invoice", "Vendor", "Status", "Amount", "Submitted", "Due", "Submitted by", "Tax"
     };
 
-    public static byte[] ToPdfPaymentTable(string reportType, int reportId, IReadOnlyList<PaymentPreviewRow> rows)
+    public static byte[] ToPdfPaymentTable(string? reportName, string reportType, int reportId, IReadOnlyList<PaymentPreviewRow> rows)
     {
+        var headerTitle = string.IsNullOrWhiteSpace(reportName)
+            ? $"Analyst Report (ID: {reportId})"
+            : $"Analyst Report: {reportName.Trim()} (ID: {reportId})";
         return Document.Create(document =>
         {
             document.Page(page =>
@@ -29,8 +32,8 @@ public static class ReportExportHelper
                 page.Content().Column(column =>
                 {
                     column.Spacing(10);
-                    column.Item().Text($"Report: {reportType} (ID {reportId})").FontSize(14).SemiBold();
-                    column.Item().Text($"Payments matching filters — {rows.Count} row(s)")
+                    column.Item().Text(headerTitle).FontSize(14).SemiBold();
+                    column.Item().Text($"Type: {reportType} · Payments matching filters — {rows.Count} row(s)")
                         .FontSize(10).FontColor(Colors.Grey.Darken2);
                     column.Item().Text($"Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC")
                         .FontSize(9).FontColor(Colors.Grey.Medium);
@@ -81,20 +84,22 @@ public static class ReportExportHelper
         }).GeneratePdf();
     }
 
-    public static byte[] ToXlsxPaymentTable(string reportType, int reportId, IReadOnlyList<PaymentPreviewRow> rows)
+    public static byte[] ToXlsxPaymentTable(string? reportName, string reportType, int reportId, IReadOnlyList<PaymentPreviewRow> rows)
     {
         using var wb = new XLWorkbook();
         var ws = wb.AddWorksheet("Payments");
-        ws.Cell(1, 1).Value = "Report type";
-        ws.Cell(1, 2).Value = reportType;
-        ws.Cell(2, 1).Value = "Report ID";
-        ws.Cell(2, 2).Value = reportId;
-        ws.Cell(3, 1).Value = "Rows (matching filters)";
-        ws.Cell(3, 2).Value = rows.Count;
-        ws.Cell(4, 1).Value = "Generated (UTC)";
-        ws.Cell(4, 2).Value = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        ws.Cell(1, 1).Value = "Report name";
+        ws.Cell(1, 2).Value = string.IsNullOrWhiteSpace(reportName) ? "—" : reportName.Trim();
+        ws.Cell(2, 1).Value = "Report type";
+        ws.Cell(2, 2).Value = reportType;
+        ws.Cell(3, 1).Value = "Report ID";
+        ws.Cell(3, 2).Value = reportId;
+        ws.Cell(4, 1).Value = "Rows (matching filters)";
+        ws.Cell(4, 2).Value = rows.Count;
+        ws.Cell(5, 1).Value = "Generated (UTC)";
+        ws.Cell(5, 2).Value = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
 
-        var headerRow = 6;
+        var headerRow = 7;
         for (var i = 0; i < TableHeaders.Length; i++)
             ws.Cell(headerRow, i + 1).Value = TableHeaders[i];
 

@@ -1,4 +1,5 @@
 import { Link, Outlet, useNavigate } from "react-router-dom";
+import AdminReportNotifier from "./AdminReportNotifier.jsx";
 import { useAuth } from "../context/AuthContext.jsx";
 
 const navByRole = {
@@ -14,10 +15,7 @@ const navByRole = {
     { to: "/accountant/payments", label: "Payments" },
   ],
   Manager: [{ to: "/manager/payments", label: "Payments" }],
-  Analyst: [
-    { to: "/analyst/dashboard", label: "Dashboard" },
-    { to: "/analyst/reports", label: "Reports" },
-  ],
+  Analyst: [{ to: "/analyst/dashboard", label: "Dashboard" }],
 };
 
 export default function Layout() {
@@ -63,6 +61,7 @@ export default function Layout() {
           </nav>
         </aside>
         <main className="min-w-0 flex-1">
+          {role === "Admin" ? <AdminReportNotifier /> : null}
           <Outlet />
         </main>
       </div>
