@@ -14,4 +14,6 @@ public class User
     public bool IsActive { get; set; } = true;
     public int RoleId { get; set; }
     public Role? Role { get; set; }
+    public int? DepartmentId { get; set; }
+    public Department? Department { get; set; }
 }

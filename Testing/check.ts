@@ -61,6 +61,12 @@ async function main() {
   r = await req("/api/users", { token: adminToken });
   assert(r.status === 200, "GET /api/users");
 
+  r = await req("/api/departments", { token: adminToken });
+  assert(r.status === 200, "GET /api/departments");
+  const depts = r.json as { id: number }[];
+  assert(Array.isArray(depts) && depts.length > 0, "at least one department");
+  const deptId = depts[0].id;
+
   const accUser = `acct_${suffix}`;
   const mgrUser = `mgr_${suffix}`;
   const anlUser = `anl_${suffix}`;
@@ -87,6 +93,7 @@ async function main() {
       username: mgrUser,
       email: `${mgrUser}@ven.local`,
       role: "Manager",
+      departmentId: deptId,
     },
   });
   assert(r.status === 201 || r.status === 200, `create manager: ${r.status}`);
@@ -206,6 +213,7 @@ async function main() {
     method: "POST",
     token: accToken,
     body: {
+      departmentId: deptId,
       vendorId: vendor.id,
       vendorBankAccountId: account.id,
       invoiceNo: `INV-${suffix}`,

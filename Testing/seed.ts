@@ -42,14 +42,20 @@ INSERT INTO TaxTypes (Id, Name, Rate, Description, IsActive) VALUES
   (4, N'WHT', 0.05, N'Withholding Tax 5%', 1);
 SET IDENTITY_INSERT TaxTypes OFF;
 
-INSERT INTO Users (FullName, Username, Email, PasswordHash, TempPass, IsActive, RoleId) VALUES
-  (N'Rajesh Krishnan', N'admin', N'admin@ven.local', N'${esc}', 0, 1, 1),
-  (N'Priya Sharma', N'acct1', N'accountant1@ven.local', N'${esc}', 0, 1, 2),
-  (N'Vikram Iyer', N'acct2', N'accountant2@ven.local', N'${esc}', 0, 1, 2),
-  (N'Ananya Reddy', N'mgr1', N'manager1@ven.local', N'${esc}', 0, 1, 3),
-  (N'Karthik Nair', N'mgr2', N'manager2@ven.local', N'${esc}', 0, 1, 3),
-  (N'Deepika Menon', N'anl1', N'analyst1@ven.local', N'${esc}', 0, 1, 4),
-  (N'Rohit Saxena', N'anl2', N'analyst2@ven.local', N'${esc}', 0, 1, 4);
+SET IDENTITY_INSERT Departments ON;
+INSERT INTO Departments (Id, Name, IsActive) VALUES
+  (1, N'01-Training Dept', 1),
+  (2, N'02-IT Dept', 1);
+SET IDENTITY_INSERT Departments OFF;
+
+INSERT INTO Users (FullName, Username, Email, PasswordHash, TempPass, IsActive, RoleId, DepartmentId) VALUES
+  (N'Rajesh Krishnan', N'admin', N'admin@ven.local', N'${esc}', 0, 1, 1, NULL),
+  (N'Priya Sharma', N'acct1', N'accountant1@ven.local', N'${esc}', 0, 1, 2, NULL),
+  (N'Vikram Iyer', N'acct2', N'accountant2@ven.local', N'${esc}', 0, 1, 2, NULL),
+  (N'Ananya Reddy', N'mgr1', N'manager1@ven.local', N'${esc}', 0, 1, 3, 1),
+  (N'Karthik Nair', N'mgr2', N'manager2@ven.local', N'${esc}', 0, 1, 3, 2),
+  (N'Deepika Menon', N'anl1', N'analyst1@ven.local', N'${esc}', 0, 1, 4, NULL),
+  (N'Rohit Saxena', N'anl2', N'analyst2@ven.local', N'${esc}', 0, 1, 4, NULL);
 
 INSERT INTO Vendors (Name, ContactName, Email, Phone, Address, IsActive, CreatedAt) VALUES
   (N'Dell India Pvt Ltd', N'Sunita Desai', N'ap.dell@procurement.ven.local', N'+91-22-6123-4000', N'Plot 3, Mindspace, Malad West, Mumbai 400064', 1, SYSUTCDATETIME()),
@@ -75,7 +81,7 @@ INSERT INTO VendorBankAccounts (VendorId, BankName, AccountName, AccountNo, Rout
     process.exit(1);
   }
 
-  console.log("Roles, tax types, users, vendors, and bank accounts inserted.");
+  console.log("Roles, tax types, departments, users, vendors, and bank accounts inserted.");
   console.log(`  Password for all seeded users: ${devPassword}`);
 }
 

@@ -19,12 +19,17 @@ public class PaymentService
         var query = _db.PaymentRequests
             .Include(p => p.Vendor)
             .Include(p => p.SubmittedBy)
+            .Include(p => p.Department)
             .AsQueryable();
 
         if (role == "Accountant")
             query = query.Where(p => p.SubmittedById == userId);
         else if (role == "Manager")
         {
+            var manager = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+            if (manager?.DepartmentId == null)
+                return new List<PaymentRequest>();
+            query = query.Where(p => p.DepartmentId == manager.DepartmentId);
             if (statusFilter == "PENDING")
                 query = query.Where(p => p.Status == "PENDING");
             else if (!string.IsNullOrEmpty(statusFilter))
@@ -37,6 +42,9 @@ public class PaymentService
     public async Task<PaymentRequest?> CreateAsync(CreatePaymentRequest request, int submittedById, CancellationToken cancellationToken = default)
     {
         if (request.Items == null || request.Items.Count == 0) return null;
+        var dept = await _db.Departments.FirstOrDefaultAsync(d => d.Id == request.DepartmentId && d.IsActive, cancellationToken);
+        if (dept == null) return null;
+
         var vendor = await _db.Vendors.FindAsync(new object[] { request.VendorId }, cancellationToken);
         if (vendor == null || !vendor.IsActive) return null;
 
@@ -84,6 +92,7 @@ public class PaymentService
 
         var pr = new PaymentRequest
         {
+            DepartmentId = request.DepartmentId,
             VendorId = request.VendorId,
             VendorBankAccountId = bank.Id,
             InvoiceNo = request.InvoiceNo,
@@ -106,6 +115,7 @@ public class PaymentService
         };
         _db.PaymentRequests.Add(pr);
         await _db.SaveChangesAsync(cancellationToken);
+        await _db.Entry(pr).Reference(p => p.Department).LoadAsync(cancellationToken);
         return pr;
     }
 
@@ -117,16 +127,26 @@ public class PaymentService
             .Include(p => p.SubmittedBy)
             .Include(p => p.ReviewedBy)
             .Include(p => p.Items)
+            .Include(p => p.Department)
             .FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
         if (pr == null) return null;
         if (role == "Accountant" && pr.SubmittedById != userId) return null;
+        if (role == "Manager")
+        {
+            var manager = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, cancellationToken);
+            if (!pr.DepartmentId.HasValue || manager?.DepartmentId == null || pr.DepartmentId != manager.DepartmentId)
+                return null;
+        }
         return pr;
     }
 
     public async Task<PaymentRequest?> ApproveAsync(int id, int reviewedById, string? note, CancellationToken cancellationToken = default)
     {
-        var pr = await _db.PaymentRequests.FindAsync(new object[] { id }, cancellationToken);
+        var pr = await _db.PaymentRequests.FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
         if (pr == null || pr.Status != "PENDING") return null;
+        var reviewer = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reviewedById, cancellationToken);
+        if (!pr.DepartmentId.HasValue || reviewer?.DepartmentId == null || pr.DepartmentId != reviewer.DepartmentId)
+            return null;
         pr.Status = "APPROVED";
         pr.ReviewedById = reviewedById;
         pr.ReviewNote = note;
@@ -137,8 +157,11 @@ public class PaymentService
 
     public async Task<PaymentRequest?> RejectAsync(int id, int reviewedById, string? note, CancellationToken cancellationToken = default)
     {
-        var pr = await _db.PaymentRequests.FindAsync(new object[] { id }, cancellationToken);
+        var pr = await _db.PaymentRequests.FirstOrDefaultAsync(p => p.Id == id, cancellationToken);
         if (pr == null || pr.Status != "PENDING") return null;
+        var reviewer = await _db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == reviewedById, cancellationToken);
+        if (!pr.DepartmentId.HasValue || reviewer?.DepartmentId == null || pr.DepartmentId != reviewer.DepartmentId)
+            return null;
         pr.Status = "REJECTED";
         pr.ReviewedById = reviewedById;
         pr.ReviewNote = note;

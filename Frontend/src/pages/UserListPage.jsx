@@ -7,6 +7,7 @@ import {
   updateUser,
 } from "../api/userApi.js";
 import DataTable from "../components/DataTable.jsx";
+import DepartmentPicker from "../components/DepartmentPicker.jsx";
 import Modal from "../components/Modal.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 
@@ -17,6 +18,7 @@ const emptyUser = {
   username: "",
   email: "",
   role: "Accountant",
+  departmentId: null,
 };
 
 export default function UserListPage() {
@@ -60,28 +62,38 @@ export default function UserListPage() {
       username: row.username,
       email: row.email,
       role: row.role,
+      departmentId: row.departmentId ?? null,
     });
     setModalOpen(true);
   }
 
   async function save(e) {
     e.preventDefault();
+    if (form.role === "Manager" && form.departmentId == null) {
+      setError("Select a department for Manager.");
+      return;
+    }
+    setError("");
     try {
       if (editingId) {
-        await updateUser(editingId, {
+        const body = {
           fullName: form.fullName,
           email: form.email,
           role: form.role,
-        });
+        };
+        if (form.role === "Manager") body.departmentId = form.departmentId;
+        await updateUser(editingId, body);
         setModalOpen(false);
         await load();
       } else {
-        const created = await createUser({
+        const createBody = {
           fullName: form.fullName,
           username: form.username,
           email: form.email,
           role: form.role,
-        });
+        };
+        if (form.role === "Manager") createBody.departmentId = form.departmentId;
+        const created = await createUser(createBody);
         setModalOpen(false);
         await load();
         const pw = created?.generatedTempPassword;
@@ -134,6 +146,11 @@ export default function UserListPage() {
     { key: "email", label: "Email" },
     { key: "role", label: "Role" },
     {
+      key: "departmentName",
+      label: "Department",
+      render: (r) => r.departmentName ?? "—",
+    },
+    {
       key: "isActive",
       label: "Status",
       render: (r) => <StatusBadge status="Active" />,
@@ -169,6 +186,11 @@ export default function UserListPage() {
     { key: "username", label: "Username" },
     { key: "email", label: "Email" },
     { key: "role", label: "Role" },
+    {
+      key: "departmentName",
+      label: "Department",
+      render: (r) => r.departmentName ?? "—",
+    },
     {
       key: "isActive",
       label: "Status",
@@ -251,7 +273,14 @@ export default function UserListPage() {
             <select
               className="mt-1 w-full rounded-md border border-neutral-200 px-3 py-2 text-sm"
               value={form.role}
-              onChange={(e) => setForm({ ...form, role: e.target.value })}
+              onChange={(e) => {
+                const role = e.target.value;
+                setForm({
+                  ...form,
+                  role,
+                  departmentId: role === "Manager" ? form.departmentId : null,
+                });
+              }}
             >
               {roles.map((r) => (
                 <option key={r} value={r}>
@@ -260,6 +289,13 @@ export default function UserListPage() {
               ))}
             </select>
           </div>
+          {form.role === "Manager" && (
+            <DepartmentPicker
+              value={form.departmentId}
+              onChange={(id) => setForm({ ...form, departmentId: id })}
+              required
+            />
+          )}
           {!editingId && (
             <p className="text-sm text-neutral-600">
               A secure temporary password will be generated automatically. Share it with the user once.

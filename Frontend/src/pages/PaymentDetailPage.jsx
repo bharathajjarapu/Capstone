@@ -64,7 +64,11 @@ export default function PaymentDetailPage() {
       </div>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm">
+          <div className="font-medium">Department</div>
+          <div className="mt-1">{payment.department?.name ?? "—"}</div>
+        </div>
         <div className="rounded-lg border border-neutral-200 bg-white p-4 text-sm">
           <div className="font-medium">Vendor</div>
           <div className="mt-1">{payment.vendor?.name}</div>

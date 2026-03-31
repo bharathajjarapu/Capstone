@@ -3,6 +3,8 @@ namespace VenDot.Models;
 public class PaymentRequest
 {
     public int Id { get; set; }
+    public int? DepartmentId { get; set; }
+    public Department? Department { get; set; }
     public int VendorId { get; set; }
     public Vendor? Vendor { get; set; }
     public int VendorBankAccountId { get; set; }

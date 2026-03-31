@@ -58,6 +58,11 @@ export default function ManagerDashboard() {
   const columns = [
     { key: "invoiceNo", label: "Invoice" },
     {
+      key: "department",
+      label: "Department",
+      render: (r) => r.department?.name ?? "—",
+    },
+    {
       key: "vendor",
       label: "Vendor",
       render: (r) => r.vendor?.name ?? "",

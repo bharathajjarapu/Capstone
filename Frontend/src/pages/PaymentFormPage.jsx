@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { createPayment } from "../api/paymentApi.js";
 import { getBankAccounts } from "../api/vendorApi.js";
 import LineItemsTable from "../components/LineItemsTable.jsx";
+import DepartmentPicker from "../components/DepartmentPicker.jsx";
 import TaxPicker from "../components/TaxPicker.jsx";
 import VendorPicker from "../components/VendorPicker.jsx";
 
@@ -16,6 +17,7 @@ export default function PaymentFormPage() {
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState([{ description: "", quantity: 1, unitPrice: 0.01 }]);
   const [tax, setTax] = useState({ taxTypeId: null, taxRate: 0, taxAmount: 0, customTaxRate: undefined });
+  const [departmentId, setDepartmentId] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -54,6 +56,10 @@ export default function PaymentFormPage() {
       setError("Due date is required.");
       return;
     }
+    if (departmentId == null) {
+      setError("Department is required.");
+      return;
+    }
     const badLine = items.find(
       (it) =>
         !String(it.description).trim() ||
@@ -65,6 +71,7 @@ export default function PaymentFormPage() {
       return;
     }
     const payload = {
+      departmentId,
       vendorId,
       vendorBankAccountId: Number(vendorBankAccountId),
       invoiceNo,
@@ -97,6 +104,7 @@ export default function PaymentFormPage() {
       <h1 className="text-lg font-semibold">New payment request</h1>
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       <form className="mt-4 space-y-4" onSubmit={submit}>
+        <DepartmentPicker value={departmentId} onChange={setDepartmentId} required />
         <VendorPicker value={vendorId} onChange={onVendorChange} />
         <div>
           <label className="block text-sm font-medium">Bank account</label>

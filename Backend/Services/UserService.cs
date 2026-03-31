@@ -19,6 +19,7 @@ public class UserService
     {
         return await _db.Users
             .Include(u => u.Role)
+            .Include(u => u.Department)
             .OrderBy(u => u.FullName)
             .Select(u => new UserResponse
             {
@@ -27,7 +28,9 @@ public class UserService
                 Username = u.Username,
                 Email = u.Email,
                 Role = u.Role!.Name,
-                IsActive = u.IsActive
+                IsActive = u.IsActive,
+                DepartmentId = u.DepartmentId,
+                DepartmentName = u.Department != null ? u.Department.Name : null
             })
             .ToListAsync(cancellationToken);
     }
@@ -44,6 +47,16 @@ public class UserService
             ? PasswordGenerator.GenerateTemporaryPassword()
             : request.TempPassword!;
 
+        int? departmentId = null;
+        if (role.Name == "Manager")
+        {
+            if (!request.DepartmentId.HasValue) return null;
+            var deptOk = await _db.Departments.AnyAsync(
+                d => d.Id == request.DepartmentId.Value && d.IsActive, cancellationToken);
+            if (!deptOk) return null;
+            departmentId = request.DepartmentId.Value;
+        }
+
         var user = new User
         {
             FullName = request.FullName,
@@ -52,10 +65,14 @@ public class UserService
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(plainTemp),
             TempPass = true,
             IsActive = true,
-            RoleId = role.Id
+            RoleId = role.Id,
+            DepartmentId = departmentId
         };
         _db.Users.Add(user);
         await _db.SaveChangesAsync(cancellationToken);
+        var deptName = departmentId.HasValue
+            ? await _db.Departments.Where(d => d.Id == departmentId.Value).Select(d => d.Name).FirstOrDefaultAsync(cancellationToken)
+            : null;
         return new UserCreateResponse
         {
             Id = user.Id,
@@ -64,6 +81,8 @@ public class UserService
             Email = user.Email,
             Role = role.Name,
             IsActive = user.IsActive,
+            DepartmentId = departmentId,
+            DepartmentName = deptName,
             GeneratedTempPassword = plainTemp
         };
     }
@@ -79,7 +98,20 @@ public class UserService
         user.FullName = request.FullName;
         user.Email = emailNorm;
         user.RoleId = role.Id;
+        if (role.Name == "Manager")
+        {
+            if (!request.DepartmentId.HasValue) return null;
+            var deptOk = await _db.Departments.AnyAsync(
+                d => d.Id == request.DepartmentId.Value && d.IsActive, cancellationToken);
+            if (!deptOk) return null;
+            user.DepartmentId = request.DepartmentId.Value;
+        }
+        else
+        {
+            user.DepartmentId = null;
+        }
         await _db.SaveChangesAsync(cancellationToken);
+        await _db.Entry(user).Reference(u => u.Department).LoadAsync(cancellationToken);
         return new UserResponse
         {
             Id = user.Id,
@@ -87,7 +119,9 @@ public class UserService
             Username = user.Username,
             Email = user.Email,
             Role = role.Name,
-            IsActive = user.IsActive
+            IsActive = user.IsActive,
+            DepartmentId = user.DepartmentId,
+            DepartmentName = user.Department?.Name
         };
     }
 

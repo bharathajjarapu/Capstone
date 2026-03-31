@@ -51,7 +51,7 @@ Point `Backend/appsettings.json` (and `appsettings.Development.json`) `Connectio
 **VenDot** is a web application that manages payments to registered vendors. It replaces manual emails and spreadsheets with a structured approval workflow.
 
 **Core Flow:**
-Admin registers vendors → Accountant raises payment requests with line items and tax → Manager approves or rejects → Analyst generates filtered reports
+Admin registers vendors and assigns each **Manager** to a **Department** → Accountant raises payment requests (with line items, tax, and a target **Department**) → only **Managers in that Department** review and approve or reject → Analyst generates filtered reports
 
 **Four roles:** Admin · Accountant · Manager · Analyst. All users share the same login and password-change flows (`TempPass` when an admin sets a temporary password).
 
@@ -69,10 +69,12 @@ Capstone/
 │   │   ├── UserController.cs
 │   │   ├── VendorController.cs
 │   │   ├── TaxController.cs
+│   │   ├── DepartmentController.cs
 │   │   ├── PaymentController.cs
 │   │   └── ReportController.cs
 │   ├── Models/
 │   │   ├── Role.cs
+│   │   ├── Department.cs
 │   │   ├── User.cs
 │   │   ├── Vendor.cs
 │   │   ├── VendorBankAccount.cs
@@ -107,6 +109,7 @@ Capstone/
 │   │       └── ReportFilters.cs
 │   ├── Services/
 │   │   ├── AuthService.cs
+│   │   ├── DepartmentService.cs
 │   │   ├── UserService.cs
 │   │   ├── VendorService.cs
 │   │   ├── PaymentService.cs
@@ -143,6 +146,7 @@ Capstone/
     │   │   ├── authApi.js
     │   │   ├── userApi.js
     │   │   ├── vendorApi.js
+    │   │   ├── departmentApi.js
     │   │   ├── paymentApi.js
     │   │   └── reportApi.js
     │   ├── components/
@@ -151,6 +155,7 @@ Capstone/
     │   │   ├── DataTable.jsx
     │   │   ├── Modal.jsx
     │   │   ├── VendorPicker.jsx
+    │   │   ├── DepartmentPicker.jsx
     │   │   ├── BankAccountPicker.jsx
     │   │   ├── LineItemsTable.jsx
     │   │   └── TaxPicker.jsx
@@ -215,6 +220,7 @@ Users
   TempPass       BIT              -- true = admin set a temp password; user must change password before using the rest of the app
   IsActive       BIT
   RoleId         INT FK → Roles
+  DepartmentId   INT NULL FK → Departments   -- set for Manager; null for other roles
 ```
 
 > **Key Change from Spec:** `IsFirstLogin` is renamed to `TempPass`. The logic is simpler:
@@ -263,10 +269,21 @@ TaxTypes
 Reference IDs (inserted by **`Testing/seed.ts`**): 1=None(0%) · 2=GST(10%) · 3=VAT(15%) · 4=WHT(5%)
 ```
 
+### 4.5.1 Departments
+```
+Departments
+  Id       INT PK auto
+  Name     NVARCHAR(200)
+  IsActive BIT
+
+Reference IDs (inserted by **`Testing/seed.ts`**): 1=01-Training Dept · 2=02-IT Dept
+```
+
 ### 4.6 PaymentRequests
 ```
 PaymentRequests
   Id                  INT PK auto
+  DepartmentId        INT NULL FK → Departments   -- required on create; routes approval to managers in that department
   VendorId            INT FK → Vendors
   VendorBankAccountId INT FK → VendorBankAccounts   -- which account was used for this request
   InvoiceNo           NVARCHAR(100)
@@ -455,16 +472,16 @@ Frontend route guards remain; this middleware is the real security boundary.
 | Method | Route | Description |
 |--------|-------|-------------|
 | GET | `/api/users` | List all users (active and inactive — UI may split into two tables) |
-| POST | `/api/users` | Create user — `TempPass = true`; temp password **auto-generated** if `tempPassword` omitted; response **`UserCreateResponse`** includes **`generatedTempPassword`** (once) |
-| PUT | `/api/users/{id}` | Update name, email, role |
+| POST | `/api/users` | Create user — `TempPass = true`; temp password **auto-generated** if `tempPassword` omitted; response **`UserCreateResponse`** includes **`generatedTempPassword`** (once); **`departmentId` required** when `role` is **Manager** |
+| PUT | `/api/users/{id}` | Update name, email, role; **`departmentId` required** when role is **Manager** (cleared for other roles) |
 | PATCH | `/api/users/{id}/deactivate` | Set `IsActive = false` |
 | DELETE | `/api/users/{id}` | Soft-delete (same as deactivate — history preserved) |
 | PATCH | `/api/users/{id}/reset-password` | Body optional: omit or empty `tempPassword` to auto-generate; response **`ResetPasswordResponse`** with **`generatedTempPassword`** |
 
 **`Services/UserService.cs`**
-- `GetAll()` — returns list of all users with role names (never return `PasswordHash` to clients)
-- `Create(createUserRequest)` — uses **`Utils/PasswordGenerator`** when `TempPassword` is empty; otherwise **`BCrypt.HashPassword`**; sets `TempPass = true`; **email** normalized via `Utils/EmailNormalizer`; fails if **username** or **email** already exists
-- `Update(id, updateRequest)` — updates name, email, role; **email** normalized; fails if another user already has that email
+- `GetAll()` — returns list of all users with role names and optional **`departmentId` / `departmentName`** (never return `PasswordHash` to clients)
+- `Create(createUserRequest)` — uses **`Utils/PasswordGenerator`** when `TempPassword` is empty; otherwise **`BCrypt.HashPassword`**; sets `TempPass = true`; **email** normalized via `Utils/EmailNormalizer`; fails if **username** or **email** already exists; for **Manager**, validates **`departmentId`** against an active department
+- `Update(id, updateRequest)` — updates name, email, role; **email** normalized; fails if another user already has that email; clears **`DepartmentId`** when the role is not Manager
 - `Deactivate(id)` — sets `IsActive = false`
 - `ResetPassword(id, tempPassword)` — optional plaintext; if empty, **PasswordGenerator**; **`BCrypt.HashPassword`**, sets `TempPass = true`; returns **`ResetPasswordResponse`**
 
@@ -497,22 +514,31 @@ Frontend route guards remain; this middleware is the real security boundary.
 |--------|-------|------|-------------|
 | GET | `/api/tax-types` | All | List active tax types for dropdown |
 
+### 5.7.1 Departments — `Controllers/DepartmentController.cs`
+
+| Method | Route | Role | Description |
+|--------|-------|------|-------------|
+| GET | `/api/departments` | All authenticated | List active departments (Admin user form, Accountant payment form) |
+
+**`Services/DepartmentService.cs`**
+- `GetActiveAsync()` — returns departments where **`IsActive = true`**, ordered by name
+
 ### 5.8 Payments — `Controllers/PaymentController.cs`
 
 | Method | Route | Role | Description |
 |--------|-------|------|-------------|
 | GET | `/api/payments` | Accountant, Manager | Role-filtered list |
-| POST | `/api/payments` | Accountant | Create request with line items |
+| POST | `/api/payments` | Accountant | Create request with **`departmentId`** + line items |
 | GET | `/api/payments/{id}` | Accountant, Manager | Full detail with vendor, items, tax |
 | POST | `/api/payments/{id}/approve` | Manager | Approve + optional note |
 | POST | `/api/payments/{id}/reject` | Manager | Reject + optional note |
 
 **`Services/PaymentService.cs`**
-- `GetAll(userId, role)` — Accountant sees only their own; Manager sees all PENDING
-- `Create(createPaymentRequest, submittedById)` — requires **`vendorBankAccountId`** (must belong to the selected vendor); copies **snapshot** columns from that `VendorBankAccount` row; saves request + line items; validate at least one line item, positive quantity and unit price; all money math server-side
-- `GetById(id)` — returns full detail using **snapshot** fields for bank display; include live vendor name from `Vendors` as needed
-- `Approve(id, reviewedById, note)` — sets `Status = APPROVED`, saves `ReviewedAt = now`, stores note
-- `Reject(id, reviewedById, note)` — sets `Status = REJECTED`, saves `ReviewedAt = now`, stores note
+- `GetAll(userId, role)` — Accountant sees only their own submissions; **Manager** sees only requests where **`PaymentRequest.DepartmentId`** equals the manager’s **`User.DepartmentId`** (and only if the manager has a department); status filter applies within that set (e.g. PENDING tab)
+- `Create(createPaymentRequest, submittedById)` — requires **`departmentId`** (active department); requires **`vendorBankAccountId`** (must belong to the selected vendor); copies **snapshot** columns from that `VendorBankAccount` row; saves request + line items; validate at least one line item, positive quantity and unit price; all money math server-side
+- `GetById(id)` — returns full detail using **snapshot** fields for bank display; include live vendor name from `Vendors` as needed; **Managers** only if the request’s department matches theirs
+- `Approve(id, reviewedById, note)` — sets `Status = APPROVED`, saves `ReviewedAt = now`, stores note; **only if** the reviewer’s **`DepartmentId`** matches the payment’s **`DepartmentId`**
+- `Reject(id, reviewedById, note)` — sets `Status = REJECTED`, saves `ReviewedAt = now`, stores note; **same department check** as approve
 
 **Calculation rules — always recalculated in `PaymentService`, never trusted from the frontend:**
 ```
@@ -653,6 +679,7 @@ Each file makes the axios calls for one domain and exports named functions that 
 | `api/authApi.js` | `login(email, password)`, `changePassword(newPassword)` |
 | `api/userApi.js` | `getUsers()`, `createUser(data)`, `updateUser(id, data)`, `deactivateUser(id)`, `deleteUser(id)` (soft-delete), `resetPassword(id, tempPassword?)` — returns `generatedTempPassword` when omitted |
 | `api/vendorApi.js` | `getVendors()`, `createVendor(data)`, `updateVendor(id, data)`, `deactivateVendor(id)`, `getBankAccounts(vendorId)`, `addBankAccount(vendorId, data)`, `updateBankAccount(vendorId, accountId, data)`, `setDefaultAccount(vendorId, accountId)` |
+| `api/departmentApi.js` | `getDepartments()` |
 | `api/paymentApi.js` | `getPayments()`, `createPayment(data)`, `getPaymentById(id)`, `approvePayment(id, note)`, `rejectPayment(id, note)` |
 | `api/reportApi.js` | `previewReport(filters)`, `generateReport(payload)`, `getReports()`, `getReportById(id)`, `downloadReport(id, format)`, `triggerReportDownload(id, format)` — **pdf** / **xlsx** only |
 
@@ -702,6 +729,9 @@ Centered overlay with a backdrop, a title prop, a children slot for the form con
 **`components/VendorPicker.jsx`**
 Searchable dropdown component. Calls `GET /api/vendors` on mount and loads the vendor list. Filters the displayed options as the user types. Accepts `value` and `onChange` props. Passes the selected `vendorId` back via `onChange`.
 
+**`components/DepartmentPicker.jsx`**
+Searchable dropdown. Calls `GET /api/departments` on mount. Used on **`UserListPage`** when the role is **Manager** (required) and on **`PaymentFormPage`** so the accountant selects which department approves the request.
+
 **`components/BankAccountPicker.jsx` (or inline on payment form)**  
 After a vendor is selected, load `GET /api/vendors/{id}/accounts` and let the accountant pick **one** bank account. Submit `vendorBankAccountId` with the payment create request.
 
@@ -719,7 +749,7 @@ Calls `GET /api/tax-types` on mount and loads the options. Renders a dropdown of
 **Step 2 — New password (only when `tempPass` after login):** New Password and Confirm Password fields. Validates they match and are at least 8 characters. On submit calls `authApi.changePassword()` (JWT from Step 1). On success: `markPasswordChanged()` (sets `tempPass = false` in context + `localStorage`), navigates to role dashboard. No way to skip — the page stays on this step until completed; route guard blocks every other route while `tempPass` is true.
 
 #### `UserListPage.jsx` (Admin)
-**Active users:** DataTable (Full Name, Username, Email, Role, Status, actions). **Add user** — no manual temp password; the API generates one and a modal shows it once to copy. **Edit** opens the modal (no password field). **Delete** confirms soft-delete (`deleteUser`). **Reset password** confirms, then the API generates a new temp password and shows it once. **Deleted users:** separate section below lists **inactive** accounts only (read-only table — no actions); history is retained.
+**Active users:** DataTable (Full Name, Username, Email, Role, **Department**, Status, actions). **Add user** — no manual temp password; the API generates one and a modal shows it once to copy. When **Role = Manager**, **`DepartmentPicker`** is shown and **`departmentId`** is required. **Edit** opens the modal (no password field). **Delete** confirms soft-delete (`deleteUser`). **Reset password** confirms, then the API generates a new temp password and shows it once. **Deleted users:** separate section below lists **inactive** accounts only (read-only table — no actions); history is retained.
 
 #### `VendorListPage.jsx` (Admin)
 DataTable showing Name, Contact Name, Email, Phone, and Status. "Add Vendor" button opens a Modal with all vendor fields. Edit button per row opens same Modal pre-filled. Deactivate button with confirmation. "Bank Accounts" button per row navigates to `BankAccountPage` for that vendor.
@@ -729,6 +759,7 @@ Shows the vendor name at the top for context. DataTable showing Bank Name, Accou
 
 #### `PaymentFormPage.jsx` (Accountant)
 Full payment creation form:
+- `DepartmentPicker` to select the approving department (**`departmentId`** sent to API)
 - `VendorPicker` to select the vendor
 - Bank account selector for that vendor (`vendorBankAccountId` sent to API)
 - Invoice No text input
@@ -740,13 +771,13 @@ Full payment creation form:
 - Submit button calls `createPayment` with all data → navigates to `PaymentListPage` on success
 
 #### `PaymentListPage.jsx` (Accountant)
-DataTable showing Invoice No, Vendor Name, Grand Total, Status badge, Submitted Date. Clicking any row navigates to `PaymentDetailPage` in read-only mode (approve/reject buttons are not shown for accountants).
+DataTable showing Invoice No, **Department**, Vendor Name, Grand Total, Status badge, Submitted Date. Clicking any row navigates to `PaymentDetailPage` in read-only mode (approve/reject buttons are not shown for accountants).
 
 #### `ManagerDashboard.jsx` (Manager)
-Two tabs — Pending and History. Pending tab shows a DataTable of all PENDING requests with Invoice No, Vendor, Accountant Name, Total, Submitted Date. Clicking a row navigates to `PaymentDetailPage`. History tab shows all reviewed requests with the decision badge and review date.
+Two tabs — Pending and History. Pending tab shows a DataTable of PENDING requests **for this manager’s department** with Invoice No, **Department**, Vendor, Accountant Name, Total, Submitted Date. Clicking a row navigates to `PaymentDetailPage`. History tab shows reviewed requests in the same department with the decision badge and review date.
 
 #### `PaymentDetailPage.jsx` (Manager + Accountant)
-Full breakdown of a single request: vendor name and contact info, vendor bank account details, all line items in a table, tax type, tax rate, tax amount, and grand total. Accountant notes shown if present. Manager view shows an Approve button, a Reject button, and an optional review note input. On Approve: calls `approvePayment`, then navigates back (optional brief success message in local state). On Reject: same for `rejectPayment`. When viewed by an accountant: buttons are hidden, the status badge and any manager review note are shown instead.
+Full breakdown of a single request: **department name**, vendor name and contact info, vendor bank account details, all line items in a table, tax type, tax rate, tax amount, and grand total. Accountant notes shown if present. Manager view shows an Approve button, a Reject button, and an optional review note input. On Approve: calls `approvePayment`, then navigates back (optional brief success message in local state). On Reject: same for `rejectPayment`. When viewed by an accountant: buttons are hidden, the status badge and any manager review note are shown instead.
 
 #### `ReportListPage.jsx` (Analyst + Admin)
 Filter panel (collapsible) with controls for all available filter types. Required Report Type selector. "Generate Report" button calls `reportApi.generateReport(filters)` and adds a new row to the table with Status = PROCESSING. DataTable showing Report Type, a summary of applied filters, Requested At timestamp, Status badge, and a Download button (shown only when Status = READY). Polling: a `setInterval` runs every 3 seconds and calls `getReportById(id)` for every PROCESSING row — when the status becomes READY, the Download button appears and the polling for that row stops; if FAILED, an error badge shows and polling stops. Admin's version of this page shows all reports from all analysts.

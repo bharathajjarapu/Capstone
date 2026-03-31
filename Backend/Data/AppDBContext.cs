@@ -8,6 +8,7 @@ public class AppDBContext : DbContext
     public AppDBContext(DbContextOptions<AppDBContext> options) : base(options) { }
 
     public DbSet<Role> Roles => Set<Role>();
+    public DbSet<Department> Departments => Set<Department>();
     public DbSet<User> Users => Set<User>();
     public DbSet<Vendor> Vendors => Set<Vendor>();
     public DbSet<VendorBankAccount> VendorBankAccounts => Set<VendorBankAccount>();
@@ -24,6 +25,7 @@ public class AppDBContext : DbContext
             e.HasIndex(u => u.Username).IsUnique();
             e.HasIndex(u => u.Email).IsUnique();
             e.HasOne(u => u.Role).WithMany(r => r.Users).HasForeignKey(u => u.RoleId);
+            e.HasOne(u => u.Department).WithMany(d => d.Users).HasForeignKey(u => u.DepartmentId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<VendorBankAccount>(e =>
@@ -47,6 +49,7 @@ public class AppDBContext : DbContext
             e.HasOne(p => p.TaxType).WithMany().HasForeignKey(p => p.TaxTypeId).OnDelete(DeleteBehavior.SetNull);
             e.HasOne(p => p.SubmittedBy).WithMany().HasForeignKey(p => p.SubmittedById).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(p => p.ReviewedBy).WithMany().HasForeignKey(p => p.ReviewedById).OnDelete(DeleteBehavior.SetNull);
+            e.HasOne(p => p.Department).WithMany(d => d.PaymentRequests).HasForeignKey(p => p.DepartmentId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<PaymentItem>(e =>
