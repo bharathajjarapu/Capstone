@@ -19,7 +19,7 @@ public class PaymentController : ControllerBase
     }
 
     private int UserId => int.Parse(User.FindFirstValue("userId") ?? User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "0");
-    private string Role => User.FindFirstValue("role") ?? "";
+    private string Role => User.FindFirstValue("role") ?? User.FindFirstValue(ClaimTypes.Role) ?? "";
 
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] string? status, CancellationToken cancellationToken)

@@ -30,11 +30,12 @@ public class PaymentService
             if (manager?.DepartmentId == null)
                 return new List<PaymentRequest>();
             query = query.Where(p => p.DepartmentId == manager.DepartmentId);
-            if (statusFilter == "PENDING")
-                query = query.Where(p => p.Status == "PENDING");
-            else if (!string.IsNullOrEmpty(statusFilter))
-                query = query.Where(p => p.Status == statusFilter);
         }
+        else
+            return new List<PaymentRequest>();
+
+        if (!string.IsNullOrEmpty(statusFilter))
+            query = query.Where(p => p.Status == statusFilter);
 
         return await query.OrderByDescending(p => p.SubmittedAt).ToListAsync(cancellationToken);
     }

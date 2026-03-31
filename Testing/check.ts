@@ -1,11 +1,14 @@
-/**
- * API checks for VenDot (Bun). Requires the backend running (default http://localhost:5261).
- * Env: VENDOT_API_URL, VENDOT_ADMIN_EMAIL, VENDOT_ADMIN_PASS
- */
 const baseUrl = (process.env.VENDOT_API_URL ?? "http://localhost:5261").replace(/\/$/, "");
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(msg);
+}
+
+function assertAllRowsHaveStatus(json: unknown, expected: string) {
+  assert(Array.isArray(json), "payments response should be an array");
+  for (const row of json as { status?: string }[]) {
+    assert(row.status === expected, `expected status ${expected}, got ${String(row.status)}`);
+  }
 }
 
 async function req(
@@ -231,12 +234,83 @@ async function main() {
   r = await req(`/api/payments/${payment.id}`, { token: mgrToken });
   assert(r.status === 200, "manager get payment");
 
+  r = await req(`/api/payments?status=PENDING`, { token: mgrToken });
+  assert(r.status === 200, "manager list PENDING");
+  assertAllRowsHaveStatus(r.json, "PENDING");
+  assert(
+    (r.json as { id: number }[]).some((p) => p.id === payment.id),
+    "PENDING tab should include new payment"
+  );
+
   r = await req(`/api/payments/${payment.id}/approve`, {
     method: "POST",
     token: mgrToken,
     body: { note: "ok" },
   });
   assert(r.status === 200, "approve");
+
+  r = await req(`/api/payments?status=PENDING`, { token: mgrToken });
+  assert(r.status === 200, "manager list PENDING after approve");
+  assertAllRowsHaveStatus(r.json, "PENDING");
+  assert(
+    !(r.json as { id: number }[]).some((p) => p.id === payment.id),
+    "PENDING tab must not include approved payment"
+  );
+
+  r = await req(`/api/payments?status=APPROVED`, { token: mgrToken });
+  assert(r.status === 200, "manager list APPROVED after approve");
+  assertAllRowsHaveStatus(r.json, "APPROVED");
+  assert(
+    (r.json as { id: number }[]).some((p) => p.id === payment.id),
+    "APPROVED tab should include approved payment"
+  );
+
+  r = await req("/api/payments", {
+    method: "POST",
+    token: accToken,
+    body: {
+      departmentId: deptId,
+      vendorId: vendor.id,
+      vendorBankAccountId: account.id,
+      invoiceNo: `INV2-${suffix}`,
+      dueDate: dueStr,
+      taxTypeId: 1,
+      items: [{ description: "Line 2", quantity: 1, unitPrice: 50 }],
+    },
+  });
+  assert(r.status === 201, `create second payment ${r.status}`);
+  const payment2 = r.json as { id: number };
+
+  r = await req(`/api/payments?status=PENDING`, { token: mgrToken });
+  assert(r.status === 200, "manager PENDING with second payment");
+  assertAllRowsHaveStatus(r.json, "PENDING");
+  assert(
+    (r.json as { id: number }[]).some((p) => p.id === payment2.id),
+    "PENDING should include second payment before reject"
+  );
+
+  r = await req(`/api/payments/${payment2.id}/reject`, {
+    method: "POST",
+    token: mgrToken,
+    body: { note: "no" },
+  });
+  assert(r.status === 200, "reject second payment");
+
+  r = await req(`/api/payments?status=REJECTED`, { token: mgrToken });
+  assert(r.status === 200, "manager list REJECTED after reject");
+  assertAllRowsHaveStatus(r.json, "REJECTED");
+  assert(
+    (r.json as { id: number }[]).some((p) => p.id === payment2.id),
+    "REJECTED tab should include rejected payment"
+  );
+
+  r = await req(`/api/payments?status=PENDING`, { token: mgrToken });
+  assert(r.status === 200, "manager PENDING after reject");
+  assertAllRowsHaveStatus(r.json, "PENDING");
+  assert(
+    !(r.json as { id: number }[]).some((p) => p.id === payment2.id),
+    "PENDING must not include rejected payment"
+  );
 
   r = await req("/api/reports/preview", {
     method: "POST",

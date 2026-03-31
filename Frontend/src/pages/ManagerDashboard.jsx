@@ -6,10 +6,10 @@ import StatusBadge from "../components/StatusBadge.jsx";
 
 export default function ManagerDashboard() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState("pending");
+  const [tab, setTab] = useState("PENDING");
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [counts, setCounts] = useState({ pending: "—", reviewed: "—" });
+  const [counts, setCounts] = useState({ pending: "—", approved: "—", rejected: "—" });
 
   useEffect(() => {
     let cancelled = false;
@@ -20,11 +20,12 @@ export default function ManagerDashboard() {
         if (!cancelled) {
           setCounts({
             pending: String(list.filter((p) => p.status === "PENDING").length),
-            reviewed: String(list.filter((p) => p.status !== "PENDING").length),
+            approved: String(list.filter((p) => p.status === "APPROVED").length),
+            rejected: String(list.filter((p) => p.status === "REJECTED").length),
           });
         }
       } catch {
-        if (!cancelled) setCounts({ pending: "?", reviewed: "?" });
+        if (!cancelled) setCounts({ pending: "?", approved: "?", rejected: "?" });
       }
     })();
     return () => {
@@ -37,15 +38,9 @@ export default function ManagerDashboard() {
     (async () => {
       setLoading(true);
       try {
-        const status = tab === "pending" ? "PENDING" : undefined;
-        const data = await getPayments(status);
-        if (!cancelled) {
-          if (tab === "history") {
-            setRows(data.filter((p) => p.status !== "PENDING"));
-          } else {
-            setRows(data);
-          }
-        }
+        const data = await getPayments(tab);
+        const list = Array.isArray(data) ? data : [];
+        if (!cancelled) setRows(list.filter((p) => p.status === tab));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -94,26 +89,36 @@ export default function ManagerDashboard() {
       <h1 className="text-lg font-semibold">Manager</h1>
       <div className="mt-4 flex flex-wrap gap-3 text-sm">
         <span className="rounded-md border border-neutral-200 bg-white px-3 py-1.5">
-          Pending queue: <strong>{counts.pending}</strong>
+          Pending: <strong>{counts.pending}</strong>
         </span>
         <span className="rounded-md border border-neutral-200 bg-white px-3 py-1.5">
-          Reviewed: <strong>{counts.reviewed}</strong>
+          Approved: <strong>{counts.approved}</strong>
+        </span>
+        <span className="rounded-md border border-neutral-200 bg-white px-3 py-1.5">
+          Rejected: <strong>{counts.rejected}</strong>
         </span>
       </div>
-      <div className="mt-4 flex gap-2">
+      <div className="mt-4 flex flex-wrap gap-2">
         <button
           type="button"
-          className={`rounded-md px-3 py-1.5 text-sm ${tab === "pending" ? "bg-neutral-900 text-white" : "bg-white border border-neutral-200"}`}
-          onClick={() => setTab("pending")}
+          className={`rounded-md px-3 py-1.5 text-sm ${tab === "PENDING" ? "bg-neutral-900 text-white" : "bg-white border border-neutral-200"}`}
+          onClick={() => setTab("PENDING")}
         >
           Pending
         </button>
         <button
           type="button"
-          className={`rounded-md px-3 py-1.5 text-sm ${tab === "history" ? "bg-neutral-900 text-white" : "bg-white border border-neutral-200"}`}
-          onClick={() => setTab("history")}
+          className={`rounded-md px-3 py-1.5 text-sm ${tab === "APPROVED" ? "bg-neutral-900 text-white" : "bg-white border border-neutral-200"}`}
+          onClick={() => setTab("APPROVED")}
         >
-          History
+          Approved
+        </button>
+        <button
+          type="button"
+          className={`rounded-md px-3 py-1.5 text-sm ${tab === "REJECTED" ? "bg-neutral-900 text-white" : "bg-white border border-neutral-200"}`}
+          onClick={() => setTab("REJECTED")}
+        >
+          Rejected
         </button>
       </div>
       {loading ? (
